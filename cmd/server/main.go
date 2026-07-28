@@ -76,7 +76,7 @@ func updateHandler(resp http.ResponseWriter, req *http.Request) {
 		value, err := strconv.ParseFloat(metricValue, 64)
 
 		if err != nil {
-			http.Error(resp, "Wrong value type!", http.StatusNotFound)
+			http.Error(resp, "Wrong value type!", http.StatusBadRequest)
 			return
 		}
 
@@ -86,7 +86,7 @@ func updateHandler(resp http.ResponseWriter, req *http.Request) {
 		value, err := strconv.ParseInt(metricValue, 10, 64)
 
 		if err != nil {
-			http.Error(resp, "Wrong value type!", http.StatusNotFound)
+			http.Error(resp, "Wrong value type!", http.StatusBadRequest)
 			return
 		}
 
