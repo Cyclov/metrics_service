@@ -75,7 +75,7 @@ func updateHandler(resp http.ResponseWriter, req *http.Request) {
 	case TypeGauge:
 		value, err := strconv.ParseFloat(metricValue, 64)
 
-		if err == nil {
+		if err != nil {
 			http.Error(resp, "Wrong value type!", http.StatusNotFound)
 			return
 		}
@@ -85,7 +85,7 @@ func updateHandler(resp http.ResponseWriter, req *http.Request) {
 	case TypeCounter:
 		value, err := strconv.ParseInt(metricValue, 10, 64)
 
-		if err == nil {
+		if err != nil {
 			http.Error(resp, "Wrong value type!", http.StatusNotFound)
 			return
 		}
