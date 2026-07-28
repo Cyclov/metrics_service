@@ -75,15 +75,22 @@ func updateHandler(resp http.ResponseWriter, req *http.Request) {
 	case TypeGauge:
 		value, err := strconv.ParseFloat(metricValue, 64)
 
-		if err != nil {
-			storage.AddGauge(metricName, value)
+		if err == nil {
+			http.Error(resp, "Wrong value type!", http.StatusNotFound)
+			return
 		}
+
+		storage.AddGauge(metricName, value)
 
 	case TypeCounter:
 		value, err := strconv.ParseInt(metricValue, 10, 64)
-		if err != nil {
-			storage.AddCounter(metricName, value)
+
+		if err == nil {
+			http.Error(resp, "Wrong value type!", http.StatusNotFound)
+			return
 		}
+
+		storage.AddCounter(metricName, value)
 
 	default:
 		http.Error(resp, "Wrong metric type, only gauge and counter types are allowed!", http.StatusBadRequest)
