@@ -15,7 +15,7 @@ func main() {
 
 	router := chi.NewRouter()
 	router.Post("/update/{type}/{name}/{value}", h.Update)
-	router.Get("/value/{type}/{name}/", h.Value)
+	router.Get("/value/{type}/{name}", h.Value)
 	router.Get("/", h.AllMetrics)
 
 	log.Fatal(http.ListenAndServe(":8080", router))
