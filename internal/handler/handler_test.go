@@ -4,6 +4,9 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 type storageMock struct {
@@ -19,18 +22,32 @@ func (s *storageMock) AddCounter(name string, value int64) {
 	s.counters[name] += value
 }
 
+func (s *storageMock) Gauge(name string) (float64, bool) {
+	value, ok := s.gauges[name]
+	return value, ok
+}
+
+func (s *storageMock) Counter(name string) (int64, bool) {
+	value, ok := s.counters[name]
+	return value, ok
+}
+
+func (s *storageMock) AllMetrics() (map[string]float64, map[string]int64) {
+	return s.gauges, s.counters
+}
+
 func TestUpdate(t *testing.T) {
 	tests := []struct {
 		name       string
-		method     string
-		path       string
+		metricType string
+		metricName string
+		value      string
 		wantStatus int
 	}{
-		{"gauge", http.MethodPost, "/update/gauge/Alloc/1.5", http.StatusOK},
-		{"counter", http.MethodPost, "/update/counter/PollCount/2", http.StatusOK},
-		{"bad type", http.MethodPost, "/update/unknown/x/1", http.StatusBadRequest},
-		{"bad value", http.MethodPost, "/update/gauge/x/nope", http.StatusBadRequest},
-		{"bad method", http.MethodGet, "/update/gauge/x/1", http.StatusMethodNotAllowed},
+		{"gauge", "gauge", "Alloc", "1.5", http.StatusOK},
+		{"counter", "counter", "PollCount", "2", http.StatusOK},
+		{"bad type", "unknown", "x", "1", http.StatusBadRequest},
+		{"bad value", "gauge", "x", "nope", http.StatusBadRequest},
 	}
 
 	for _, tt := range tests {
@@ -40,15 +57,114 @@ func TestUpdate(t *testing.T) {
 				counters: make(map[string]int64),
 			}
 			h := New(storage)
-			mux := http.NewServeMux()
-			mux.HandleFunc("/update/{type}/{name}/{value}", h.Update)
 
-			req := httptest.NewRequest(tt.method, tt.path, nil)
+			req := httptest.NewRequest(http.MethodPost, "/update", nil)
+			req.SetPathValue("type", tt.metricType)
+			req.SetPathValue("name", tt.metricName)
+			req.SetPathValue("value", tt.value)
 			rec := httptest.NewRecorder()
-			mux.ServeHTTP(rec, req)
-			if rec.Code != tt.wantStatus {
-				t.Fatalf("status = %d, want %d", rec.Code, tt.wantStatus)
+
+			h.Update(rec, req)
+
+			assert.Equal(t, tt.wantStatus, rec.Code)
+		})
+	}
+}
+
+func TestValue(t *testing.T) {
+	storage := &storageMock{
+		gauges: map[string]float64{
+			"Alloc": 12.5,
+		},
+		counters: map[string]int64{
+			"PollCount": 3,
+		},
+	}
+	h := New(storage)
+
+	tests := []struct {
+		name       string
+		metricType string
+		metricName string
+		wantStatus int
+		wantBody   string
+	}{
+		{
+			name:       "gauge",
+			metricType: "gauge",
+			metricName: "Alloc",
+			wantStatus: http.StatusOK,
+			wantBody:   "12.5",
+		},
+		{
+			name:       "counter",
+			metricType: "counter",
+			metricName: "PollCount",
+			wantStatus: http.StatusOK,
+			wantBody:   "3",
+		},
+		{
+			name:       "metric not found",
+			metricType: "gauge",
+			metricName: "Unknown",
+			wantStatus: http.StatusNotFound,
+		},
+		{
+			name:       "wrong metric type",
+			metricType: "unknown",
+			metricName: "Alloc",
+			wantStatus: http.StatusBadRequest,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, "/value", nil)
+			req.SetPathValue("type", tt.metricType)
+			req.SetPathValue("name", tt.metricName)
+			rec := httptest.NewRecorder()
+
+			h.Value(rec, req)
+
+			assert.Equal(t, tt.wantStatus, rec.Code)
+			if tt.wantBody != "" {
+				assert.Equal(t, tt.wantBody, rec.Body.String())
+			}
+			if tt.wantStatus == http.StatusOK {
+				assert.Equal(t, "text/plain; charset=utf-8", rec.Header().Get("Content-Type"))
 			}
 		})
+	}
+}
+
+func TestAllMetrics(t *testing.T) {
+	storage := &storageMock{
+		gauges: map[string]float64{
+			"Alloc":       12.5,
+			"RandomValue": 0.25,
+		},
+		counters: map[string]int64{
+			"PollCount": 3,
+		},
+	}
+	h := New(storage)
+
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	rec := httptest.NewRecorder()
+	h.AllMetrics(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	assert.Equal(t, "text/html; charset=utf-8", rec.Header().Get("Content-Type"))
+
+	body := rec.Body.String()
+	wantFragments := []string{
+		"<h2>Gauge</h2>",
+		"<p>Alloc: 12.5</p>",
+		"<p>RandomValue: 0.25</p>",
+		"<h2>Counters</h2>",
+		"<p>PollCount: 3</p>",
+	}
+	for _, fragment := range wantFragments {
+		assert.Contains(t, body, fragment)
 	}
 }
