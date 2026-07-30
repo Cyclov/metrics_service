@@ -3,12 +3,13 @@ package agent
 import (
 	"fmt"
 	"math/rand"
-	"net/http"
 	"net/url"
 	"runtime"
 	"strconv"
 	"sync"
 	"time"
+
+	"github.com/go-resty/resty/v2"
 )
 
 type Metrics struct {
@@ -83,13 +84,13 @@ func (c *Collector) CurrentMetrics() Metrics {
 
 type Sender struct {
 	baseURL string
-	client  *http.Client
+	client  *resty.Client
 }
 
-func NewSender(baseURL string, client *http.Client) *Sender {
+func NewSender(baseURL string, client *resty.Client) *Sender {
 
 	if client == nil {
-		client = &http.Client{Timeout: 5 * time.Second}
+		client = resty.New().SetTimeout(5 * time.Second)
 	}
 
 	return &Sender{baseURL: baseURL, client: client}
@@ -110,24 +111,16 @@ func (s *Sender) post(metricType, name, value string) error {
 
 	endpoint := fmt.Sprintf("%s/update/%s/%s/%s",
 		s.baseURL, metricType, url.PathEscape(name), url.PathEscape(value))
-	req, err := http.NewRequest(http.MethodPost, endpoint, nil)
+	resp, err := s.client.R().
+		SetHeader("Content-Type", "text/plain").
+		Post(endpoint)
 
 	if err != nil {
 		return err
 	}
 
-	req.Header.Set("Content-Type", "text/plain")
-
-	resp, err := s.client.Do(req)
-
-	if err != nil {
-		return err
-	}
-
-	defer resp.Body.Close()
-
-	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
-		return fmt.Errorf("server returned status %s", resp.Status)
+	if !resp.IsSuccess() {
+		return fmt.Errorf("server returned status %s", resp.Status())
 	}
 
 	return nil

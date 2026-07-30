@@ -7,6 +7,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/go-resty/resty/v2"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -38,7 +39,9 @@ func TestSenderSend(t *testing.T) {
 	}))
 	defer server.Close()
 
-	sender := NewSender(server.URL, server.Client())
+	client := resty.New().
+		SetTransport(server.Client().Transport)
+	sender := NewSender(server.URL, client)
 	err := sender.Send(Metrics{
 		Gauges:    map[string]float64{"Alloc": 12.5},
 		PollCount: 3,
