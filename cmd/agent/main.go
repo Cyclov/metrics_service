@@ -2,21 +2,17 @@ package main
 
 import (
 	"log"
-	"time"
 
 	"github.com/Cyclov/metrics_service/internal/agent"
+	"github.com/Cyclov/metrics_service/internal/config"
 )
 
-const (
-	pollInterval   = 2 * time.Second
-	reportInterval = 10 * time.Second
-	serverAddress  = "http://localhost:8080"
-) //Потом перенесу в конфиг
-
 func main() {
+	cfg := config.AgentConfig()
 	collector := agent.NewCollector()
-	sender := agent.NewSender(serverAddress, nil)
-	if err := agent.Run(collector, sender, pollInterval, reportInterval); err != nil {
+	sender := agent.NewSender("http://"+cfg.SrvAdr, nil)
+
+	if err := agent.Run(collector, sender, cfg.PollInterval, cfg.ReportInterval); err != nil {
 		log.Fatal(err)
 	}
 }
