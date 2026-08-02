@@ -96,15 +96,15 @@ func NewSender(baseURL string, client *resty.Client) *Sender {
 	return &Sender{baseURL: baseURL, client: client}
 }
 
-func (sender *Sender) Send(metrics Metrics) error {
+func (s *Sender) Send(metrics Metrics) error {
 
 	for name, value := range metrics.Gauges {
-		if err := sender.post("gauge", name, strconv.FormatFloat(value, 'g', -1, 64)); err != nil {
+		if err := s.post("gauge", name, strconv.FormatFloat(value, 'g', -1, 64)); err != nil {
 			return err
 		}
 	}
 
-	return sender.post("counter", "PollCount", strconv.FormatInt(metrics.PollCount, 10))
+	return s.post("counter", "PollCount", strconv.FormatInt(metrics.PollCount, 10))
 }
 
 func (s *Sender) post(metricType, name, value string) error {
