@@ -3,6 +3,7 @@ module github.com/Cyclov/metrics_service
 go 1.25.5
 
 require (
+	github.com/caarlos0/env/v11 v11.4.1
 	github.com/go-chi/chi/v5 v5.3.1
 	github.com/go-resty/resty/v2 v2.16.5
 )
