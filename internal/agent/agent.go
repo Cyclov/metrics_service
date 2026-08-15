@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"log"
 	"math/rand"
 	"runtime"
 	"sync"
@@ -152,7 +153,7 @@ func Run(collector *Collector, sender *Sender, pollInterval, reportInterval time
 			collector.Poll()
 		case <-reportTicker.C:
 			if err := sender.Send(collector.CurrentMetrics()); err != nil {
-				return err
+				log.Printf("failed to send metrics: %v", err)
 			}
 		}
 	}
