@@ -7,7 +7,11 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/Cyclov/metrics_service/internal/agent"
 	models "github.com/Cyclov/metrics_service/internal/model"
+	"github.com/Cyclov/metrics_service/internal/repository"
+	"github.com/go-chi/chi/v5"
+	"github.com/go-resty/resty/v2"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -204,4 +208,69 @@ func TestJSONEndpoints(t *testing.T) {
 	require.NoError(t, json.NewDecoder(valueRec.Body).Decode(&got))
 	require.NotNil(t, got.Value)
 	assert.Equal(t, value, *got.Value)
+}
+
+func TestJSONEndpointsRejectEmptyRequiredFields(t *testing.T) {
+	tests := []struct {
+		name    string
+		handler http.HandlerFunc
+		body    string
+	}{
+		{name: "update empty id", handler: New(newStorageMock()).Update, body: `{"type":"gauge","value":1}`},
+		{name: "update blank id", handler: New(newStorageMock()).Update, body: `{"id":"   ","type":"gauge","value":1}`},
+		{name: "update empty type", handler: New(newStorageMock()).Update, body: `{"id":"Alloc","value":1}`},
+		{name: "update gauge without value", handler: New(newStorageMock()).Update, body: `{"id":"Alloc","type":"gauge"}`},
+		{name: "update counter without delta", handler: New(newStorageMock()).Update, body: `{"id":"PollCount","type":"counter"}`},
+		{name: "value empty id", handler: New(newStorageMock()).Value, body: `{"type":"gauge"}`},
+		{name: "value empty type", handler: New(newStorageMock()).Value, body: `{"id":"Alloc"}`},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodPost, "/", bytes.NewBufferString(tt.body))
+			req.Header.Set("Content-Type", "application/json")
+			rec := httptest.NewRecorder()
+
+			tt.handler.ServeHTTP(rec, req)
+
+			assert.Equal(t, http.StatusBadRequest, rec.Code)
+		})
+	}
+}
+
+func newStorageMock() *storageMock {
+	return &storageMock{
+		gauges:   make(map[string]float64),
+		counters: make(map[string]int64),
+	}
+}
+
+func TestAgentUpdateAndValueIntegration(t *testing.T) {
+	storage := repository.NewMemStorage()
+	h := New(storage)
+	router := chi.NewRouter()
+	router.Post("/update", h.Update)
+	router.Post("/value/", h.Value)
+	server := httptest.NewServer(router)
+	defer server.Close()
+
+	client := resty.New().SetTransport(server.Client().Transport)
+	sender := agent.NewSender(server.URL, client)
+	value := 42.5
+	require.NoError(t, sender.Send([]models.Metrics{
+		{ID: "Alloc", MType: models.Gauge, Value: &value},
+	}))
+
+	body, err := json.Marshal(models.Metrics{ID: "Alloc", MType: models.Gauge})
+	require.NoError(t, err)
+	req := httptest.NewRequest(http.MethodPost, "/value/", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	var metric models.Metrics
+	require.NoError(t, json.NewDecoder(rec.Body).Decode(&metric))
+	require.NotNil(t, metric.Value)
+	assert.Equal(t, value, *metric.Value)
 }

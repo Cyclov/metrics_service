@@ -7,8 +7,10 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/Cyclov/metrics_service/internal/logger"
 	models "github.com/Cyclov/metrics_service/internal/model"
 	"github.com/Cyclov/metrics_service/internal/repository"
+	"go.uber.org/zap"
 )
 
 type Handler struct {
@@ -54,6 +56,9 @@ func (h *Handler) Update(resp http.ResponseWriter, req *http.Request) {
 	if !ok {
 		return
 	}
+	if !validateMetricIdentity(resp, metric) {
+		return
+	}
 
 	switch metric.MType {
 	case models.Gauge:
@@ -83,11 +88,15 @@ func (h *Handler) Value(resp http.ResponseWriter, req *http.Request) {
 	if !ok {
 		return
 	}
+	if !validateMetricIdentity(resp, metric) {
+		return
+	}
 
 	switch metric.MType {
 	case models.Gauge:
 		value, found := h.storage.Gauge(metric.ID)
 		if !found {
+			logger.Log.Warn("metric not found", zap.String("id", metric.ID), zap.String("type", metric.MType))
 			http.NotFound(resp, req)
 			return
 		}
@@ -95,6 +104,7 @@ func (h *Handler) Value(resp http.ResponseWriter, req *http.Request) {
 	case models.Counter:
 		value, found := h.storage.Counter(metric.ID)
 		if !found {
+			logger.Log.Warn("metric not found", zap.String("id", metric.ID), zap.String("type", metric.MType))
 			http.NotFound(resp, req)
 			return
 		}
@@ -114,6 +124,18 @@ func decodeMetric(resp http.ResponseWriter, req *http.Request) (models.Metrics, 
 		return models.Metrics{}, false
 	}
 	return metric, true
+}
+
+func validateMetricIdentity(resp http.ResponseWriter, metric models.Metrics) bool {
+	if strings.TrimSpace(metric.ID) == "" {
+		http.Error(resp, "Metric ID is required", http.StatusBadRequest)
+		return false
+	}
+	if strings.TrimSpace(metric.MType) == "" {
+		http.Error(resp, "Metric type is required", http.StatusBadRequest)
+		return false
+	}
+	return true
 }
 
 func writeMetric(resp http.ResponseWriter, metric models.Metrics) {
