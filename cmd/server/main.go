@@ -22,10 +22,10 @@ func main() {
 
 	router := chi.NewRouter()
 	router.Use(logger.RequestLogger)
-	router.Post("/update", h.UpdateJSON)
-	router.Post("/value", h.ValueJSON)
-	router.Post("/update/{type}/{name}/{value}", h.Update)
-	router.Get("/value/{type}/{name}", h.Value)
+	router.Post("/update", h.Update)
+	router.Post("/value", h.Value)
+	router.Post("/update/{type}/{name}/{value}", h.UpdatePath)
+	router.Get("/value/{type}/{name}", h.ValuePath)
 	router.Get("/", h.AllMetrics)
 
 	logger.Log.Fatal("server can't start  ", zap.Error(http.ListenAndServe(config.ServerConfig().SrvAdr, router)))

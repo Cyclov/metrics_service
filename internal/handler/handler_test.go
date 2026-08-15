@@ -39,7 +39,7 @@ func (s *storageMock) AllMetrics() (map[string]float64, map[string]int64) {
 	return s.gauges, s.counters
 }
 
-func TestUpdate(t *testing.T) {
+func TestUpdatePath(t *testing.T) {
 	tests := []struct {
 		name       string
 		metricType string
@@ -67,14 +67,14 @@ func TestUpdate(t *testing.T) {
 			req.SetPathValue("value", tt.value)
 			rec := httptest.NewRecorder()
 
-			h.Update(rec, req)
+			h.UpdatePath(rec, req)
 
 			assert.Equal(t, tt.wantStatus, rec.Code)
 		})
 	}
 }
 
-func TestValue(t *testing.T) {
+func TestValuePath(t *testing.T) {
 	storage := &storageMock{
 		gauges: map[string]float64{
 			"Alloc": 12.5,
@@ -127,7 +127,7 @@ func TestValue(t *testing.T) {
 			req.SetPathValue("name", tt.metricName)
 			rec := httptest.NewRecorder()
 
-			h.Value(rec, req)
+			h.ValuePath(rec, req)
 
 			assert.Equal(t, tt.wantStatus, rec.Code)
 			if tt.wantBody != "" {
@@ -185,7 +185,7 @@ func TestJSONEndpoints(t *testing.T) {
 	updateReq := httptest.NewRequest(http.MethodPost, "/update", bytes.NewReader(updateBody))
 	updateReq.Header.Set("Content-Type", "application/json")
 	updateRec := httptest.NewRecorder()
-	h.UpdateJSON(updateRec, updateReq)
+	h.Update(updateRec, updateReq)
 
 	require.Equal(t, http.StatusOK, updateRec.Code)
 	assert.Equal(t, "application/json", updateRec.Header().Get("Content-Type"))
@@ -196,7 +196,7 @@ func TestJSONEndpoints(t *testing.T) {
 	valueReq := httptest.NewRequest(http.MethodPost, "/value", bytes.NewReader(valueBody))
 	valueReq.Header.Set("Content-Type", "application/json")
 	valueRec := httptest.NewRecorder()
-	h.ValueJSON(valueRec, valueReq)
+	h.Value(valueRec, valueReq)
 
 	require.Equal(t, http.StatusOK, valueRec.Code)
 	assert.Equal(t, "application/json", valueRec.Header().Get("Content-Type"))

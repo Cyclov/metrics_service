@@ -19,7 +19,7 @@ func New(storage repository.Storage) *Handler {
 	return &Handler{storage: storage}
 }
 
-func (h *Handler) Update(resp http.ResponseWriter, req *http.Request) {
+func (h *Handler) UpdatePath(resp http.ResponseWriter, req *http.Request) {
 	metricType := strings.ToLower(req.PathValue("type"))
 	metricName := req.PathValue("name")
 	metricValue := req.PathValue("value")
@@ -49,7 +49,7 @@ func (h *Handler) Update(resp http.ResponseWriter, req *http.Request) {
 
 }
 
-func (h *Handler) UpdateJSON(resp http.ResponseWriter, req *http.Request) {
+func (h *Handler) Update(resp http.ResponseWriter, req *http.Request) {
 	metric, ok := decodeMetric(resp, req)
 	if !ok {
 		return
@@ -78,7 +78,7 @@ func (h *Handler) UpdateJSON(resp http.ResponseWriter, req *http.Request) {
 	writeMetric(resp, metric)
 }
 
-func (h *Handler) ValueJSON(resp http.ResponseWriter, req *http.Request) {
+func (h *Handler) Value(resp http.ResponseWriter, req *http.Request) {
 	metric, ok := decodeMetric(resp, req)
 	if !ok {
 		return
@@ -149,7 +149,7 @@ func (h *Handler) AllMetrics(resp http.ResponseWriter, req *http.Request) {
 	_, _ = resp.Write([]byte(body.String()))
 }
 
-func (h *Handler) Value(resp http.ResponseWriter, req *http.Request) {
+func (h *Handler) ValuePath(resp http.ResponseWriter, req *http.Request) {
 	metricType := strings.ToLower(req.PathValue("type"))
 	metricName := req.PathValue("name")
 
