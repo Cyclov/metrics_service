@@ -45,7 +45,7 @@ func TestSenderSend(t *testing.T) {
 	var received []models.Metrics
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, http.MethodPost, r.Method)
-		assert.Equal(t, "/update", r.URL.Path)
+		assert.Equal(t, "/update/", r.URL.Path)
 		assert.Equal(t, "application/json", r.Header.Get("Content-Type"))
 		var metric models.Metrics
 		require.NoError(t, json.NewDecoder(r.Body).Decode(&metric))

@@ -249,7 +249,7 @@ func TestAgentUpdateAndValueIntegration(t *testing.T) {
 	storage := repository.NewMemStorage()
 	h := New(storage)
 	router := chi.NewRouter()
-	router.Post("/update", h.Update)
+	router.Post("/update/", h.Update)
 	router.Post("/value/", h.Value)
 	server := httptest.NewServer(router)
 	defer server.Close()

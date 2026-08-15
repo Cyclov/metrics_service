@@ -125,7 +125,7 @@ func (s *Sender) post(metric models.Metrics) error {
 	resp, err := s.client.R().
 		SetHeader("Content-Type", "application/json").
 		SetBody(body.Bytes()).
-		Post(s.baseURL + "/update")
+		Post(s.baseURL + "/update/")
 
 	if err != nil {
 		return err
