@@ -22,8 +22,8 @@ func main() {
 
 	router := chi.NewRouter()
 	router.Use(logger.RequestLogger)
-	router.Post("/update", h.Update)
-	router.Post("/value", h.Value)
+	router.Post("/update/", h.Update)
+	router.Post("/value/", h.Value)
 	router.Post("/update/{type}/{name}/{value}", h.UpdatePath)
 	router.Get("/value/{type}/{name}", h.ValuePath)
 	router.Get("/", h.AllMetrics)
