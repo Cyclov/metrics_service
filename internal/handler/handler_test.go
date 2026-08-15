@@ -1,10 +1,13 @@
 package handler
 
 import (
+	"bytes"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
+	models "github.com/Cyclov/metrics_service/internal/model"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -167,4 +170,38 @@ func TestAllMetrics(t *testing.T) {
 	for _, fragment := range wantFragments {
 		assert.Contains(t, body, fragment)
 	}
+}
+
+func TestJSONEndpoints(t *testing.T) {
+	storage := &storageMock{
+		gauges:   make(map[string]float64),
+		counters: make(map[string]int64),
+	}
+	h := New(storage)
+
+	value := 1744184459.0
+	updateBody, err := json.Marshal(models.Metrics{ID: "LastGC", MType: models.Gauge, Value: &value})
+	require.NoError(t, err)
+	updateReq := httptest.NewRequest(http.MethodPost, "/update", bytes.NewReader(updateBody))
+	updateReq.Header.Set("Content-Type", "application/json")
+	updateRec := httptest.NewRecorder()
+	h.UpdateJSON(updateRec, updateReq)
+
+	require.Equal(t, http.StatusOK, updateRec.Code)
+	assert.Equal(t, "application/json", updateRec.Header().Get("Content-Type"))
+	assert.Equal(t, value, storage.gauges["LastGC"])
+
+	valueBody, err := json.Marshal(models.Metrics{ID: "LastGC", MType: models.Gauge})
+	require.NoError(t, err)
+	valueReq := httptest.NewRequest(http.MethodPost, "/value", bytes.NewReader(valueBody))
+	valueReq.Header.Set("Content-Type", "application/json")
+	valueRec := httptest.NewRecorder()
+	h.ValueJSON(valueRec, valueReq)
+
+	require.Equal(t, http.StatusOK, valueRec.Code)
+	assert.Equal(t, "application/json", valueRec.Header().Get("Content-Type"))
+	var got models.Metrics
+	require.NoError(t, json.NewDecoder(valueRec.Body).Decode(&got))
+	require.NotNil(t, got.Value)
+	assert.Equal(t, value, *got.Value)
 }

@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"encoding/json"
 	"html"
 	"net/http"
 	"strconv"
@@ -46,6 +47,78 @@ func (h *Handler) Update(resp http.ResponseWriter, req *http.Request) {
 	resp.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	resp.WriteHeader(http.StatusOK)
 
+}
+
+func (h *Handler) UpdateJSON(resp http.ResponseWriter, req *http.Request) {
+	metric, ok := decodeMetric(resp, req)
+	if !ok {
+		return
+	}
+
+	switch metric.MType {
+	case models.Gauge:
+		if metric.Value == nil {
+			http.Error(resp, "Gauge value is required", http.StatusBadRequest)
+			return
+		}
+		h.storage.AddGauge(metric.ID, *metric.Value)
+	case models.Counter:
+		if metric.Delta == nil {
+			http.Error(resp, "Counter delta is required", http.StatusBadRequest)
+			return
+		}
+		h.storage.AddCounter(metric.ID, *metric.Delta)
+		value, _ := h.storage.Counter(metric.ID)
+		metric.Delta = &value
+	default:
+		http.Error(resp, "Wrong metric type", http.StatusBadRequest)
+		return
+	}
+
+	writeMetric(resp, metric)
+}
+
+func (h *Handler) ValueJSON(resp http.ResponseWriter, req *http.Request) {
+	metric, ok := decodeMetric(resp, req)
+	if !ok {
+		return
+	}
+
+	switch metric.MType {
+	case models.Gauge:
+		value, found := h.storage.Gauge(metric.ID)
+		if !found {
+			http.NotFound(resp, req)
+			return
+		}
+		metric.Value = &value
+	case models.Counter:
+		value, found := h.storage.Counter(metric.ID)
+		if !found {
+			http.NotFound(resp, req)
+			return
+		}
+		metric.Delta = &value
+	default:
+		http.Error(resp, "Wrong metric type", http.StatusBadRequest)
+		return
+	}
+
+	writeMetric(resp, metric)
+}
+
+func decodeMetric(resp http.ResponseWriter, req *http.Request) (models.Metrics, bool) {
+	var metric models.Metrics
+	if err := json.NewDecoder(req.Body).Decode(&metric); err != nil {
+		http.Error(resp, "Invalid JSON", http.StatusBadRequest)
+		return models.Metrics{}, false
+	}
+	return metric, true
+}
+
+func writeMetric(resp http.ResponseWriter, metric models.Metrics) {
+	resp.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(resp).Encode(metric)
 }
 
 func (h *Handler) AllMetrics(resp http.ResponseWriter, req *http.Request) {
