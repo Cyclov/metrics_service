@@ -210,6 +210,25 @@ func TestJSONEndpoints(t *testing.T) {
 	assert.Equal(t, value, *got.Value)
 }
 
+func TestUpdateCallsOnUpdate(t *testing.T) {
+	storage := newStorageMock()
+	called := false
+	h := New(storage, func() error {
+		called = true
+		return nil
+	})
+
+	req := httptest.NewRequest(http.MethodPost, "/update/gauge/Alloc/1", nil)
+	req.SetPathValue("type", models.Gauge)
+	req.SetPathValue("name", "Alloc")
+	req.SetPathValue("value", "1")
+	rec := httptest.NewRecorder()
+	h.UpdatePath(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	assert.True(t, called)
+}
+
 func TestJSONEndpointsRejectEmptyRequiredFields(t *testing.T) {
 	tests := []struct {
 		name    string

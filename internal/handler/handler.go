@@ -14,11 +14,16 @@ import (
 )
 
 type Handler struct {
-	storage repository.Storage
+	storage  repository.Storage
+	onUpdate func() error
 }
 
-func New(storage repository.Storage) *Handler {
-	return &Handler{storage: storage}
+func New(storage repository.Storage, onUpdate ...func() error) *Handler {
+	h := &Handler{storage: storage}
+	if len(onUpdate) > 0 {
+		h.onUpdate = onUpdate[0]
+	}
+	return h
 }
 
 func (h *Handler) UpdatePath(resp http.ResponseWriter, req *http.Request) {
@@ -43,6 +48,9 @@ func (h *Handler) UpdatePath(resp http.ResponseWriter, req *http.Request) {
 		h.storage.AddCounter(metricName, value)
 	default:
 		http.Error(resp, "Wrong metric type, only gauge and counter types are allowed!", http.StatusBadRequest)
+		return
+	}
+	if !h.storeMetrics(resp) {
 		return
 	}
 
@@ -79,8 +87,23 @@ func (h *Handler) Update(resp http.ResponseWriter, req *http.Request) {
 		http.Error(resp, "Wrong metric type", http.StatusBadRequest)
 		return
 	}
+	if !h.storeMetrics(resp) {
+		return
+	}
 
 	writeMetric(resp, metric)
+}
+
+func (h *Handler) storeMetrics(resp http.ResponseWriter) bool {
+	if h.onUpdate == nil {
+		return true
+	}
+	if err := h.onUpdate(); err != nil {
+		logger.Log.Error("failed to store metrics", zap.Error(err))
+		http.Error(resp, "Failed to store metrics", http.StatusInternalServerError)
+		return false
+	}
+	return true
 }
 
 func (h *Handler) Value(resp http.ResponseWriter, req *http.Request) {
