@@ -22,6 +22,7 @@ func main() {
 
 	router := chi.NewRouter()
 	router.Use(logger.RequestLogger)
+	router.Use(handler.GzipMiddleware)
 	router.Post("/update/", h.Update)
 	router.Post("/value/", h.Value)
 	router.Post("/update/{type}/{name}/{value}", h.UpdatePath)

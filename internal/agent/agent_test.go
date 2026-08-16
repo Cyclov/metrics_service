@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"compress/gzip"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -47,8 +48,13 @@ func TestSenderSend(t *testing.T) {
 		assert.Equal(t, http.MethodPost, r.Method)
 		assert.Equal(t, "/update/", r.URL.Path)
 		assert.Equal(t, "application/json", r.Header.Get("Content-Type"))
+		assert.Equal(t, "gzip", r.Header.Get("Content-Encoding"))
+		assert.Contains(t, r.Header.Get("Accept-Encoding"), "gzip")
+		zr, err := gzip.NewReader(r.Body)
+		require.NoError(t, err)
+		defer zr.Close()
 		var metric models.Metrics
-		require.NoError(t, json.NewDecoder(r.Body).Decode(&metric))
+		require.NoError(t, json.NewDecoder(zr).Decode(&metric))
 		mu.Lock()
 		received = append(received, metric)
 		mu.Unlock()

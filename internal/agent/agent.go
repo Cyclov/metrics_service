@@ -2,6 +2,7 @@ package agent
 
 import (
 	"bytes"
+	"compress/gzip"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -118,12 +119,19 @@ func (s *Sender) Send(metrics []models.Metrics) error {
 
 func (s *Sender) post(metric models.Metrics) error {
 	var body bytes.Buffer
-	if err := json.NewEncoder(&body).Encode(metric); err != nil {
+	zw := gzip.NewWriter(&body)
+	if err := json.NewEncoder(zw).Encode(metric); err != nil {
+		_ = zw.Close()
 		return fmt.Errorf("encode metric %q: %w", metric.ID, err)
+	}
+	if err := zw.Close(); err != nil {
+		return fmt.Errorf("compress metric %q: %w", metric.ID, err)
 	}
 
 	resp, err := s.client.R().
 		SetHeader("Content-Type", "application/json").
+		SetHeader("Content-Encoding", "gzip").
+		SetHeader("Accept-Encoding", "gzip").
 		SetBody(body.Bytes()).
 		Post(s.baseURL + "/update/")
 

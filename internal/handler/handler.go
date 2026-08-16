@@ -140,6 +140,7 @@ func validateMetricIdentity(resp http.ResponseWriter, metric models.Metrics) boo
 
 func writeMetric(resp http.ResponseWriter, metric models.Metrics) {
 	resp.Header().Set("Content-Type", "application/json")
+	resp.WriteHeader(http.StatusOK) // не явный статус после ИИ ревью.
 	_ = json.NewEncoder(resp).Encode(metric)
 }
 
