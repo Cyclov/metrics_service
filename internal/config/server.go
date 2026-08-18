@@ -9,38 +9,23 @@ import (
 )
 
 type ServerSettings struct {
-	SrvAdr          string
-	StoreInterval   time.Duration
-	FileStoragePath string
-	Restore         bool
+	SrvAdr          string        `env:"ADDRESS"`
+	StoreInterval   time.Duration `env:"STORE_INTERVAL"`
+	FileStoragePath string        `env:"FILE_STORAGE_PATH"`
+	Restore         bool          `env:"RESTORE"`
 }
 
 func ServerConfig() (ServerSettings, error) {
-	srvAdr := flag.String("a", ":8080", "HTTP server address")
-	storeInterval := flag.Int64("i", 300, "metrics store interval in seconds")
-	fileStoragePath := flag.String("f", "metrics.json", "metrics storage file path")
-	restore := flag.Bool("r", true, "restore metrics from storage file")
+	var cfg ServerSettings
+	flag.StringVar(&cfg.SrvAdr, "a", ":8080", "HTTP server address")
+	flag.DurationVar(&cfg.StoreInterval, "i", 300*time.Second, "metrics store interval")
+	flag.StringVar(&cfg.FileStoragePath, "f", "metrics.json", "metrics storage file path")
+	flag.BoolVar(&cfg.Restore, "r", true, "restore metrics from storage file")
 	flag.Parse()
 
-	environment := struct {
-		SrvAdr          string `env:"ADDRESS"`
-		StoreInterval   int64  `env:"STORE_INTERVAL"`
-		FileStoragePath string `env:"FILE_STORAGE_PATH"`
-		Restore         bool   `env:"RESTORE"`
-	}{
-		SrvAdr:          *srvAdr,
-		StoreInterval:   *storeInterval,
-		FileStoragePath: *fileStoragePath,
-		Restore:         *restore,
-	}
-	if err := env.Parse(&environment); err != nil {
+	if err := env.Parse(&cfg); err != nil {
 		return ServerSettings{}, fmt.Errorf("parse env config: %w", err)
 	}
 
-	return ServerSettings{
-		SrvAdr:          environment.SrvAdr,
-		StoreInterval:   time.Duration(environment.StoreInterval) * time.Second,
-		FileStoragePath: environment.FileStoragePath,
-		Restore:         environment.Restore,
-	}, nil
+	return cfg, nil
 }

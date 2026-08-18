@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/Cyclov/metrics_service/internal/config"
@@ -22,11 +23,21 @@ func Run(ctx context.Context, cfg config.ServerSettings) error {
 		}
 	}
 
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	var storeWG sync.WaitGroup
+	defer storeWG.Wait()
+
 	var onUpdate func() error
 	if cfg.StoreInterval == 0 {
 		onUpdate = func() error { return storage.Save(cfg.FileStoragePath) }
 	} else {
-		go storeMetrics(ctx, storage, cfg.FileStoragePath, cfg.StoreInterval)
+		storeWG.Add(1)
+		go func() {
+			defer storeWG.Done()
+			storeMetrics(ctx, storage, cfg.FileStoragePath, cfg.StoreInterval)
+		}()
 	}
 
 	h := handler.New(storage, onUpdate)
@@ -46,8 +57,11 @@ func Run(ctx context.Context, cfg config.ServerSettings) error {
 
 	go func() {
 		<-ctx.Done()
-		if err := httpServer.Close(); err != nil {
-			logger.Log.Error("failed to close server", zap.Error(err))
+
+		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer shutdownCancel()
+		if err := httpServer.Shutdown(shutdownCtx); err != nil {
+			logger.Log.Error("failed to gracefully shut down server", zap.Error(err))
 		}
 	}()
 

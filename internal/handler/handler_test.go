@@ -63,7 +63,7 @@ func TestUpdatePath(t *testing.T) {
 				gauges:   make(map[string]float64),
 				counters: make(map[string]int64),
 			}
-			h := New(storage)
+			h := New(storage, nil)
 
 			req := httptest.NewRequest(http.MethodPost, "/update", nil)
 			req.SetPathValue("type", tt.metricType)
@@ -87,7 +87,7 @@ func TestValuePath(t *testing.T) {
 			"PollCount": 3,
 		},
 	}
-	h := New(storage)
+	h := New(storage, nil)
 
 	tests := []struct {
 		name       string
@@ -154,7 +154,7 @@ func TestAllMetrics(t *testing.T) {
 			"PollCount": 3,
 		},
 	}
-	h := New(storage)
+	h := New(storage, nil)
 
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	rec := httptest.NewRecorder()
@@ -181,7 +181,7 @@ func TestJSONEndpoints(t *testing.T) {
 		gauges:   make(map[string]float64),
 		counters: make(map[string]int64),
 	}
-	h := New(storage)
+	h := New(storage, nil)
 
 	value := 1744184459.0
 	updateBody, err := json.Marshal(models.Metrics{ID: "LastGC", MType: models.Gauge, Value: &value})
@@ -235,13 +235,13 @@ func TestJSONEndpointsRejectEmptyRequiredFields(t *testing.T) {
 		handler http.HandlerFunc
 		body    string
 	}{
-		{name: "update empty id", handler: New(newStorageMock()).Update, body: `{"type":"gauge","value":1}`},
-		{name: "update blank id", handler: New(newStorageMock()).Update, body: `{"id":"   ","type":"gauge","value":1}`},
-		{name: "update empty type", handler: New(newStorageMock()).Update, body: `{"id":"Alloc","value":1}`},
-		{name: "update gauge without value", handler: New(newStorageMock()).Update, body: `{"id":"Alloc","type":"gauge"}`},
-		{name: "update counter without delta", handler: New(newStorageMock()).Update, body: `{"id":"PollCount","type":"counter"}`},
-		{name: "value empty id", handler: New(newStorageMock()).Value, body: `{"type":"gauge"}`},
-		{name: "value empty type", handler: New(newStorageMock()).Value, body: `{"id":"Alloc"}`},
+		{name: "update empty id", handler: New(newStorageMock(), nil).Update, body: `{"type":"gauge","value":1}`},
+		{name: "update blank id", handler: New(newStorageMock(), nil).Update, body: `{"id":"   ","type":"gauge","value":1}`},
+		{name: "update empty type", handler: New(newStorageMock(), nil).Update, body: `{"id":"Alloc","value":1}`},
+		{name: "update gauge without value", handler: New(newStorageMock(), nil).Update, body: `{"id":"Alloc","type":"gauge"}`},
+		{name: "update counter without delta", handler: New(newStorageMock(), nil).Update, body: `{"id":"PollCount","type":"counter"}`},
+		{name: "value empty id", handler: New(newStorageMock(), nil).Value, body: `{"type":"gauge"}`},
+		{name: "value empty type", handler: New(newStorageMock(), nil).Value, body: `{"id":"Alloc"}`},
 	}
 
 	for _, tt := range tests {
@@ -266,7 +266,7 @@ func newStorageMock() *storageMock {
 
 func TestAgentUpdateAndValueIntegration(t *testing.T) {
 	storage := repository.NewMemStorage()
-	h := New(storage)
+	h := New(storage, nil)
 	router := chi.NewRouter()
 	router.Use(GzipMiddleware)
 	router.Post("/update/", h.Update)

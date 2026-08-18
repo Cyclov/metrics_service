@@ -18,12 +18,11 @@ type Handler struct {
 	onUpdate func() error
 }
 
-func New(storage repository.Storage, onUpdate ...func() error) *Handler {
-	h := &Handler{storage: storage}
-	if len(onUpdate) > 0 {
-		h.onUpdate = onUpdate[0]
+func New(storage repository.Storage, onUpdate func() error) *Handler {
+	return &Handler{
+		storage:  storage,
+		onUpdate: onUpdate,
 	}
-	return h
 }
 
 func (h *Handler) UpdatePath(resp http.ResponseWriter, req *http.Request) {
@@ -141,6 +140,8 @@ func (h *Handler) Value(resp http.ResponseWriter, req *http.Request) {
 }
 
 func decodeMetric(resp http.ResponseWriter, req *http.Request) (models.Metrics, bool) {
+	defer req.Body.Close()
+
 	var metric models.Metrics
 	if err := json.NewDecoder(req.Body).Decode(&metric); err != nil {
 		http.Error(resp, "Invalid JSON", http.StatusBadRequest)
