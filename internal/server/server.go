@@ -36,7 +36,7 @@ func Run(ctx context.Context, cfg config.ServerSettings) error {
 		storeWG.Add(1)
 		go func() {
 			defer storeWG.Done()
-			storeMetrics(ctx, storage, cfg.FileStoragePath, cfg.StoreInterval)
+			storeMetrics(ctx, storage, cfg.FileStoragePath, time.Duration(cfg.StoreInterval)*time.Second)
 		}()
 	}
 
