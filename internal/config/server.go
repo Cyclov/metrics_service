@@ -2,6 +2,7 @@ package config
 
 import (
 	"flag"
+	"fmt"
 	"time"
 
 	"github.com/caarlos0/env/v11"
@@ -14,7 +15,7 @@ type ServerSettings struct {
 	Restore         bool
 }
 
-func ServerConfig() ServerSettings {
+func ServerConfig() (ServerSettings, error) {
 	srvAdr := flag.String("a", ":8080", "HTTP server address")
 	storeInterval := flag.Int64("i", 300, "metrics store interval in seconds")
 	fileStoragePath := flag.String("f", "metrics.json", "metrics storage file path")
@@ -32,12 +33,14 @@ func ServerConfig() ServerSettings {
 		FileStoragePath: *fileStoragePath,
 		Restore:         *restore,
 	}
-	_ = env.Parse(&environment)
+	if err := env.Parse(&environment); err != nil {
+		return ServerSettings{}, fmt.Errorf("parse env config: %w", err)
+	}
 
 	return ServerSettings{
 		SrvAdr:          environment.SrvAdr,
 		StoreInterval:   time.Duration(environment.StoreInterval) * time.Second,
 		FileStoragePath: environment.FileStoragePath,
 		Restore:         environment.Restore,
-	}
+	}, nil
 }

@@ -8,7 +8,11 @@ import (
 )
 
 func main() {
-	cfg := config.AgentConfig()
+	cfg, err := config.AgentConfig()
+	if err != nil {
+		log.Fatal(err)
+	}
+
 	collector := agent.NewCollector()
 	sender := agent.NewSender("http://"+cfg.SrvAdr, nil)
 
