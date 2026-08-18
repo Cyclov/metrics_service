@@ -15,16 +15,11 @@ type AgentSettings struct {
 }
 
 func AgentConfig() (AgentSettings, error) {
-	srvAdr := flag.String("a", "localhost:8080", "HTTP server address")
-	reportInterval := flag.Int64("r", 10, "metrics report interval in seconds")
-	pollInterval := flag.Int64("p", 2, "metrics poll interval in seconds")
+	var settings AgentSettings
+	flag.StringVar(&settings.SrvAdr, "a", "localhost:8080", "HTTP server address")
+	flag.DurationVar(&settings.ReportInterval, "r", 10*time.Second, "metrics report interval")
+	flag.DurationVar(&settings.PollInterval, "p", 2*time.Second, "metrics poll interval")
 	flag.Parse()
-
-	settings := AgentSettings{
-		SrvAdr:         *srvAdr,
-		ReportInterval: time.Duration(*reportInterval) * time.Second,
-		PollInterval:   time.Duration(*pollInterval) * time.Second,
-	}
 
 	if err := env.Parse(&settings); err != nil {
 		return AgentSettings{}, fmt.Errorf("parse env config: %w", err)
