@@ -2,24 +2,28 @@ package config
 
 import (
 	"flag"
-	"time"
+	"fmt"
+
+	"github.com/caarlos0/env/v11"
 )
 
 type AgentSettings struct {
-	SrvAdr         string
-	ReportInterval time.Duration
-	PollInterval   time.Duration
+	SrvAdr         string `env:"ADDRESS"`
+	ReportInterval int64  `env:"REPORT_INTERVAL"`
+	PollInterval   int64  `env:"POLL_INTERVAL"`
 }
 
-func AgentConfig() AgentSettings {
-	srvAdr := flag.String("a", "localhost:8080", "HTTP server address")
-	reportInterval := flag.Int64("r", 10, "metrics report interval in seconds")
-	pollInterval := flag.Int64("p", 2, "metrics poll interval in seconds")
+func AgentConfig() (AgentSettings, error) {
+	var settings AgentSettings
+
+	flag.StringVar(&settings.SrvAdr, "a", "localhost:8080", "HTTP server address")
+	flag.Int64Var(&settings.ReportInterval, "r", 10, "metrics report interval in seconds")
+	flag.Int64Var(&settings.PollInterval, "p", 2, "metrics poll interval in seconds")
 	flag.Parse()
 
-	return AgentSettings{
-		SrvAdr:         *srvAdr,
-		ReportInterval: time.Duration(*reportInterval) * time.Second,
-		PollInterval:   time.Duration(*pollInterval) * time.Second,
+	if err := env.Parse(&settings); err != nil {
+		return AgentSettings{}, fmt.Errorf("parse env config: %w", err)
 	}
+
+	return settings, nil
 }

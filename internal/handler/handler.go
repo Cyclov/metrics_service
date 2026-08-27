@@ -1,24 +1,31 @@
 package handler
 
 import (
+	"encoding/json"
 	"html"
 	"net/http"
 	"strconv"
 	"strings"
 
+	"github.com/Cyclov/metrics_service/internal/logger"
 	models "github.com/Cyclov/metrics_service/internal/model"
 	"github.com/Cyclov/metrics_service/internal/repository"
+	"go.uber.org/zap"
 )
 
 type Handler struct {
-	storage repository.Storage
+	storage  repository.Storage
+	onUpdate func() error
 }
 
-func New(storage repository.Storage) *Handler {
-	return &Handler{storage: storage}
+func New(storage repository.Storage, onUpdate func() error) *Handler {
+	return &Handler{
+		storage:  storage,
+		onUpdate: onUpdate,
+	}
 }
 
-func (h *Handler) Update(resp http.ResponseWriter, req *http.Request) {
+func (h *Handler) UpdatePath(resp http.ResponseWriter, req *http.Request) {
 	metricType := strings.ToLower(req.PathValue("type"))
 	metricName := req.PathValue("name")
 	metricValue := req.PathValue("value")
@@ -42,10 +49,123 @@ func (h *Handler) Update(resp http.ResponseWriter, req *http.Request) {
 		http.Error(resp, "Wrong metric type, only gauge and counter types are allowed!", http.StatusBadRequest)
 		return
 	}
+	if !h.storeMetrics(resp) {
+		return
+	}
 
 	resp.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	resp.WriteHeader(http.StatusOK)
 
+}
+
+func (h *Handler) Update(resp http.ResponseWriter, req *http.Request) {
+	metric, ok := decodeMetric(resp, req)
+	if !ok {
+		return
+	}
+	if !validateMetricIdentity(resp, metric) {
+		return
+	}
+
+	switch metric.MType {
+	case models.Gauge:
+		if metric.Value == nil {
+			http.Error(resp, "Gauge value is required", http.StatusBadRequest)
+			return
+		}
+		h.storage.AddGauge(metric.ID, *metric.Value)
+	case models.Counter:
+		if metric.Delta == nil {
+			http.Error(resp, "Counter delta is required", http.StatusBadRequest)
+			return
+		}
+		h.storage.AddCounter(metric.ID, *metric.Delta)
+		value, _ := h.storage.Counter(metric.ID)
+		metric.Delta = &value
+	default:
+		http.Error(resp, "Wrong metric type", http.StatusBadRequest)
+		return
+	}
+	if !h.storeMetrics(resp) {
+		return
+	}
+
+	writeMetric(resp, metric)
+}
+
+func (h *Handler) storeMetrics(resp http.ResponseWriter) bool {
+	if h.onUpdate == nil {
+		return true
+	}
+	if err := h.onUpdate(); err != nil {
+		logger.Log.Error("failed to store metrics", zap.Error(err))
+		http.Error(resp, "Failed to store metrics", http.StatusInternalServerError)
+		return false
+	}
+	return true
+}
+
+func (h *Handler) Value(resp http.ResponseWriter, req *http.Request) {
+	metric, ok := decodeMetric(resp, req)
+	if !ok {
+		return
+	}
+	if !validateMetricIdentity(resp, metric) {
+		return
+	}
+
+	switch metric.MType {
+	case models.Gauge:
+		value, found := h.storage.Gauge(metric.ID)
+		if !found {
+			logger.Log.Warn("metric not found", zap.String("id", metric.ID), zap.String("type", metric.MType))
+			http.NotFound(resp, req)
+			return
+		}
+		metric.Value = &value
+	case models.Counter:
+		value, found := h.storage.Counter(metric.ID)
+		if !found {
+			logger.Log.Warn("metric not found", zap.String("id", metric.ID), zap.String("type", metric.MType))
+			http.NotFound(resp, req)
+			return
+		}
+		metric.Delta = &value
+	default:
+		http.Error(resp, "Wrong metric type", http.StatusBadRequest)
+		return
+	}
+
+	writeMetric(resp, metric)
+}
+
+func decodeMetric(resp http.ResponseWriter, req *http.Request) (models.Metrics, bool) {
+	defer req.Body.Close()
+
+	var metric models.Metrics
+	if err := json.NewDecoder(req.Body).Decode(&metric); err != nil {
+		http.Error(resp, "Invalid JSON", http.StatusBadRequest)
+		return models.Metrics{}, false
+	}
+	return metric, true
+}
+
+func validateMetricIdentity(resp http.ResponseWriter, metric models.Metrics) bool {
+	if strings.TrimSpace(metric.ID) == "" {
+		http.Error(resp, "Metric ID is required", http.StatusBadRequest)
+		return false
+	}
+	if strings.TrimSpace(metric.MType) == "" {
+		http.Error(resp, "Metric type is required", http.StatusBadRequest)
+		return false
+	}
+	return true
+}
+
+func writeMetric(resp http.ResponseWriter, metric models.Metrics) {
+	resp.Header().Set("Content-Type", "application/json")
+	resp.WriteHeader(http.StatusOK) // не явный статус после ИИ ревью.
+	_ = json.NewEncoder(resp).Encode(metric)
 }
 
 func (h *Handler) AllMetrics(resp http.ResponseWriter, req *http.Request) {
@@ -76,7 +196,7 @@ func (h *Handler) AllMetrics(resp http.ResponseWriter, req *http.Request) {
 	_, _ = resp.Write([]byte(body.String()))
 }
 
-func (h *Handler) Value(resp http.ResponseWriter, req *http.Request) {
+func (h *Handler) ValuePath(resp http.ResponseWriter, req *http.Request) {
 	metricType := strings.ToLower(req.PathValue("type"))
 	metricName := req.PathValue("name")
 

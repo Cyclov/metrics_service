@@ -1,21 +1,19 @@
 package agent
 
 import (
+	"bytes"
+	"compress/gzip"
+	"encoding/json"
 	"fmt"
+	"log"
 	"math/rand"
-	"net/url"
 	"runtime"
-	"strconv"
 	"sync"
 	"time"
 
+	models "github.com/Cyclov/metrics_service/internal/model"
 	"github.com/go-resty/resty/v2"
 )
-
-type Metrics struct {
-	Gauges    map[string]float64
-	PollCount int64
-}
 
 type Collector struct {
 	mu        sync.RWMutex
@@ -71,15 +69,28 @@ func (c *Collector) Poll() {
 	c.pollCount++
 }
 
-func (c *Collector) CurrentMetrics() Metrics {
+func (c *Collector) CurrentMetrics() []models.Metrics {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 
-	gauges := make(map[string]float64, len(c.gauges))
+	metrics := make([]models.Metrics, 0, len(c.gauges)+1)
 	for name, value := range c.gauges {
-		gauges[name] = value
+		value := value
+		metrics = append(metrics, models.Metrics{
+			ID:    name,
+			MType: models.Gauge,
+			Value: &value,
+		})
 	}
-	return Metrics{Gauges: gauges, PollCount: c.pollCount}
+
+	pollCount := c.pollCount
+	metrics = append(metrics, models.Metrics{
+		ID:    "PollCount",
+		MType: models.Counter,
+		Delta: &pollCount,
+	})
+
+	return metrics
 }
 
 type Sender struct {
@@ -96,24 +107,33 @@ func NewSender(baseURL string, client *resty.Client) *Sender {
 	return &Sender{baseURL: baseURL, client: client}
 }
 
-func (s *Sender) Send(metrics Metrics) error {
-
-	for name, value := range metrics.Gauges {
-		if err := s.post("gauge", name, strconv.FormatFloat(value, 'g', -1, 64)); err != nil {
+func (s *Sender) Send(metrics []models.Metrics) error {
+	for _, metric := range metrics {
+		if err := s.post(metric); err != nil {
 			return err
 		}
 	}
 
-	return s.post("counter", "PollCount", strconv.FormatInt(metrics.PollCount, 10))
+	return nil
 }
 
-func (s *Sender) post(metricType, name, value string) error {
+func (s *Sender) post(metric models.Metrics) error {
+	var body bytes.Buffer
+	zw := gzip.NewWriter(&body)
+	if err := json.NewEncoder(zw).Encode(metric); err != nil {
+		_ = zw.Close()
+		return fmt.Errorf("encode metric %q: %w", metric.ID, err)
+	}
+	if err := zw.Close(); err != nil {
+		return fmt.Errorf("compress metric %q: %w", metric.ID, err)
+	}
 
-	endpoint := fmt.Sprintf("%s/update/%s/%s/%s",
-		s.baseURL, metricType, url.PathEscape(name), url.PathEscape(value))
 	resp, err := s.client.R().
-		SetHeader("Content-Type", "text/plain").
-		Post(endpoint)
+		SetHeader("Content-Type", "application/json").
+		SetHeader("Content-Encoding", "gzip").
+		SetHeader("Accept-Encoding", "gzip").
+		SetBody(body.Bytes()).
+		Post(s.baseURL + "/update/")
 
 	if err != nil {
 		return err
@@ -141,7 +161,7 @@ func Run(collector *Collector, sender *Sender, pollInterval, reportInterval time
 			collector.Poll()
 		case <-reportTicker.C:
 			if err := sender.Send(collector.CurrentMetrics()); err != nil {
-				return err
+				log.Printf("failed to send metrics: %v", err)
 			}
 		}
 	}

@@ -1,24 +1,30 @@
 package main
 
 import (
-	"log"
-	"net/http"
+	"context"
+	"os/signal"
+	"syscall"
 
 	"github.com/Cyclov/metrics_service/internal/config"
-	"github.com/Cyclov/metrics_service/internal/handler"
-	"github.com/Cyclov/metrics_service/internal/repository"
-	"github.com/go-chi/chi/v5"
+	"github.com/Cyclov/metrics_service/internal/logger"
+	"github.com/Cyclov/metrics_service/internal/server"
+	"go.uber.org/zap"
 )
 
 func main() {
+	if err := logger.Initialize("info"); err != nil {
+		panic(err)
+	}
 
-	storage := repository.NewMemStorage()
-	h := handler.New(storage)
+	cfg, err := config.ServerConfig()
+	if err != nil {
+		logger.Log.Fatal("failed to parse server config", zap.Error(err))
+	}
 
-	router := chi.NewRouter()
-	router.Post("/update/{type}/{name}/{value}", h.Update)
-	router.Get("/value/{type}/{name}", h.Value)
-	router.Get("/", h.AllMetrics)
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
 
-	log.Fatal(http.ListenAndServe(config.ServerConfig().SrvAdr, router))
+	if err := server.Run(ctx, cfg); err != nil {
+		logger.Log.Fatal("server can't start", zap.Error(err))
+	}
 }
