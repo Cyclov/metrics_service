@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"encoding/json"
 	"html"
 	"net/http"
@@ -16,13 +17,32 @@ import (
 type Handler struct {
 	storage  repository.Storage
 	onUpdate func() error
+	database DatabasePinger
 }
 
-func New(storage repository.Storage, onUpdate func() error) *Handler {
-	return &Handler{
+// DatabasePinger describes a database connection health check.
+type DatabasePinger interface {
+	PingContext(context.Context) error
+}
+
+func New(storage repository.Storage, onUpdate func() error, database ...DatabasePinger) *Handler {
+	h := &Handler{
 		storage:  storage,
 		onUpdate: onUpdate,
 	}
+	if len(database) > 0 {
+		h.database = database[0]
+	}
+	return h
+}
+
+func (h *Handler) Ping(resp http.ResponseWriter, req *http.Request) {
+	if h.database == nil || h.database.PingContext(req.Context()) != nil {
+		resp.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+
+	resp.WriteHeader(http.StatusOK)
 }
 
 func (h *Handler) UpdatePath(resp http.ResponseWriter, req *http.Request) {

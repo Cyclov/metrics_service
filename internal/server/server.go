@@ -2,12 +2,14 @@ package server
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"net/http"
 	"sync"
 	"time"
 
 	"github.com/Cyclov/metrics_service/internal/config"
+	"github.com/Cyclov/metrics_service/internal/config/db"
 	"github.com/Cyclov/metrics_service/internal/handler"
 	"github.com/Cyclov/metrics_service/internal/logger"
 	"github.com/Cyclov/metrics_service/internal/repository"
@@ -16,6 +18,16 @@ import (
 )
 
 func Run(ctx context.Context, cfg config.ServerSettings) error {
+	var database *sql.DB
+	if cfg.DbAdr != "" {
+		var err error
+		database, err = db.Connect(ctx, cfg.DbAdr)
+		if err != nil {
+			return err
+		}
+		defer database.Close()
+	}
+
 	storage := repository.NewMemStorage()
 	if cfg.Restore {
 		if err := storage.Load(cfg.FileStoragePath); err != nil {
@@ -41,6 +53,9 @@ func Run(ctx context.Context, cfg config.ServerSettings) error {
 	}
 
 	h := handler.New(storage, onUpdate)
+	if database != nil {
+		h = handler.New(storage, onUpdate, database)
+	}
 	router := chi.NewRouter()
 	router.Use(logger.RequestLogger)
 	router.Use(handler.GzipMiddleware)
@@ -48,6 +63,7 @@ func Run(ctx context.Context, cfg config.ServerSettings) error {
 	router.Post("/value/", h.Value)
 	router.Post("/update/{type}/{name}/{value}", h.UpdatePath)
 	router.Get("/value/{type}/{name}", h.ValuePath)
+	router.Get("/ping", h.Ping)
 	router.Get("/", h.AllMetrics)
 
 	httpServer := &http.Server{
