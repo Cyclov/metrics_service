@@ -2,6 +2,7 @@ package handler
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -56,26 +57,28 @@ func TestPing(t *testing.T) {
 	}
 }
 
-func (s *storageMock) AddGauge(name string, value float64) {
+func (s *storageMock) SetGauge(_ context.Context, name string, value float64) error {
 	s.gauges[name] = value
+	return nil
 }
 
-func (s *storageMock) AddCounter(name string, value int64) {
+func (s *storageMock) AddCounter(_ context.Context, name string, value int64) (int64, error) {
 	s.counters[name] += value
+	return s.counters[name], nil
 }
 
-func (s *storageMock) Gauge(name string) (float64, bool) {
+func (s *storageMock) Gauge(_ context.Context, name string) (float64, bool, error) {
 	value, ok := s.gauges[name]
-	return value, ok
+	return value, ok, nil
 }
 
-func (s *storageMock) Counter(name string) (int64, bool) {
+func (s *storageMock) Counter(_ context.Context, name string) (int64, bool, error) {
 	value, ok := s.counters[name]
-	return value, ok
+	return value, ok, nil
 }
 
-func (s *storageMock) AllMetrics() (map[string]float64, map[string]int64) {
-	return s.gauges, s.counters
+func (s *storageMock) AllMetrics(_ context.Context) (map[string]float64, map[string]int64, error) {
+	return s.gauges, s.counters, nil
 }
 
 func TestUpdatePath(t *testing.T) {

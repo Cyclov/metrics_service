@@ -1,6 +1,7 @@
 package repository
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"os"
@@ -11,11 +12,11 @@ import (
 )
 
 type Storage interface {
-	AddGauge(string, float64)
-	AddCounter(string, int64)
-	Gauge(string) (float64, bool)
-	Counter(string) (int64, bool)
-	AllMetrics() (map[string]float64, map[string]int64)
+	SetGauge(context.Context, string, float64) error
+	AddCounter(context.Context, string, int64) (int64, error)
+	Gauge(context.Context, string) (float64, bool, error)
+	Counter(context.Context, string) (int64, bool, error)
+	AllMetrics(context.Context) (map[string]float64, map[string]int64, error)
 }
 
 type MemStorage struct {
@@ -25,11 +26,16 @@ type MemStorage struct {
 	counter map[string]int64
 }
 
+var _ Storage = (*MemStorage)(nil)
+
 func (storage *MemStorage) Save(path string) error {
 	storage.fileMu.Lock()
 	defer storage.fileMu.Unlock()
 
-	gauges, counters := storage.AllMetrics()
+	gauges, counters, err := storage.AllMetrics(context.Background())
+	if err != nil {
+		return err
+	}
 	metrics := make([]models.Metrics, 0, len(gauges)+len(counters))
 
 	for name, value := range gauges {
@@ -93,33 +99,50 @@ func (storage *MemStorage) Load(path string) error {
 	return nil
 }
 
-func (storage *MemStorage) AddCounter(name string, value int64) {
+func (storage *MemStorage) AddCounter(ctx context.Context, name string, value int64) (int64, error) {
+	if err := ctx.Err(); err != nil {
+		return 0, err
+	}
 	storage.mu.Lock()
 	defer storage.mu.Unlock()
 	storage.counter[name] += value
+	return storage.counter[name], nil
 }
 
-func (storage *MemStorage) AddGauge(name string, value float64) {
+func (storage *MemStorage) SetGauge(ctx context.Context, name string, value float64) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	storage.mu.Lock()
 	defer storage.mu.Unlock()
 	storage.gauge[name] = value
+	return nil
 }
 
-func (storage *MemStorage) Gauge(name string) (float64, bool) {
+func (storage *MemStorage) Gauge(ctx context.Context, name string) (float64, bool, error) {
+	if err := ctx.Err(); err != nil {
+		return 0, false, err
+	}
 	storage.mu.RLock()
 	defer storage.mu.RUnlock()
 	value, ok := storage.gauge[name]
-	return value, ok
+	return value, ok, nil
 }
 
-func (storage *MemStorage) Counter(name string) (int64, bool) {
+func (storage *MemStorage) Counter(ctx context.Context, name string) (int64, bool, error) {
+	if err := ctx.Err(); err != nil {
+		return 0, false, err
+	}
 	storage.mu.RLock()
 	defer storage.mu.RUnlock()
 	value, ok := storage.counter[name]
-	return value, ok
+	return value, ok, nil
 }
 
-func (storage *MemStorage) AllMetrics() (map[string]float64, map[string]int64) {
+func (storage *MemStorage) AllMetrics(ctx context.Context) (map[string]float64, map[string]int64, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, nil, err
+	}
 	storage.mu.RLock()
 	defer storage.mu.RUnlock()
 
@@ -133,7 +156,7 @@ func (storage *MemStorage) AllMetrics() (map[string]float64, map[string]int64) {
 		counters[name] = value
 	}
 
-	return gauges, counters
+	return gauges, counters, nil
 }
 
 func NewMemStorage() *MemStorage {

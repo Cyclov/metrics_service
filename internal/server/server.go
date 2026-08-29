@@ -19,6 +19,7 @@ import (
 
 func Run(ctx context.Context, cfg config.ServerSettings) error {
 	var database *sql.DB
+	var storage repository.Storage
 	if cfg.DbAdr != "" {
 		var err error
 		database, err = db.Connect(ctx, cfg.DbAdr)
@@ -26,12 +27,17 @@ func Run(ctx context.Context, cfg config.ServerSettings) error {
 			return err
 		}
 		defer database.Close()
+		storage = repository.NewPostgresStorage(database)
 	}
 
-	storage := repository.NewMemStorage()
-	if cfg.Restore {
-		if err := storage.Load(cfg.FileStoragePath); err != nil {
-			return err
+	var fileStorage *repository.MemStorage
+	if storage == nil {
+		fileStorage = repository.NewMemStorage()
+		storage = fileStorage
+		if cfg.FileStoragePath != "" && cfg.Restore {
+			if err := fileStorage.Load(cfg.FileStoragePath); err != nil {
+				return err
+			}
 		}
 	}
 
@@ -42,13 +48,13 @@ func Run(ctx context.Context, cfg config.ServerSettings) error {
 	defer storeWG.Wait()
 
 	var onUpdate func() error
-	if cfg.StoreInterval == 0 {
-		onUpdate = func() error { return storage.Save(cfg.FileStoragePath) }
-	} else {
+	if fileStorage != nil && cfg.FileStoragePath != "" && cfg.StoreInterval == 0 {
+		onUpdate = func() error { return fileStorage.Save(cfg.FileStoragePath) }
+	} else if fileStorage != nil && cfg.FileStoragePath != "" {
 		storeWG.Add(1)
 		go func() {
 			defer storeWG.Done()
-			storeMetrics(ctx, storage, cfg.FileStoragePath, time.Duration(cfg.StoreInterval)*time.Second)
+			storeMetrics(ctx, fileStorage, cfg.FileStoragePath, time.Duration(cfg.StoreInterval)*time.Second)
 		}()
 	}
 

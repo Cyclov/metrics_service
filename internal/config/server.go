@@ -21,7 +21,7 @@ func ServerConfig() (ServerSettings, error) {
 	flag.StringVar(&settings.SrvAdr, "a", ":8080", "HTTP server address")
 	flag.StringVar(&settings.DbAdr, "d", "", "database connection string")
 	flag.Int64Var(&settings.StoreInterval, "i", 300, "metrics store interval in seconds")
-	flag.StringVar(&settings.FileStoragePath, "f", "metrics.json", "metrics storage file path")
+	flag.StringVar(&settings.FileStoragePath, "f", "", "metrics storage file path")
 	flag.BoolVar(&settings.Restore, "r", true, "restore metrics from storage file")
 	flag.Parse()
 

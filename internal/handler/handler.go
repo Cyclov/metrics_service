@@ -57,14 +57,20 @@ func (h *Handler) UpdatePath(resp http.ResponseWriter, req *http.Request) {
 			http.Error(resp, "Wrong value type!", http.StatusBadRequest)
 			return
 		}
-		h.storage.AddGauge(metricName, value)
+		if err := h.storage.SetGauge(req.Context(), metricName, value); err != nil {
+			h.storageError(resp, err)
+			return
+		}
 	case models.Counter:
 		value, err := strconv.ParseInt(metricValue, 10, 64)
 		if err != nil {
 			http.Error(resp, "Wrong value type!", http.StatusBadRequest)
 			return
 		}
-		h.storage.AddCounter(metricName, value)
+		if _, err := h.storage.AddCounter(req.Context(), metricName, value); err != nil {
+			h.storageError(resp, err)
+			return
+		}
 	default:
 		http.Error(resp, "Wrong metric type, only gauge and counter types are allowed!", http.StatusBadRequest)
 		return
@@ -93,14 +99,20 @@ func (h *Handler) Update(resp http.ResponseWriter, req *http.Request) {
 			http.Error(resp, "Gauge value is required", http.StatusBadRequest)
 			return
 		}
-		h.storage.AddGauge(metric.ID, *metric.Value)
+		if err := h.storage.SetGauge(req.Context(), metric.ID, *metric.Value); err != nil {
+			h.storageError(resp, err)
+			return
+		}
 	case models.Counter:
 		if metric.Delta == nil {
 			http.Error(resp, "Counter delta is required", http.StatusBadRequest)
 			return
 		}
-		h.storage.AddCounter(metric.ID, *metric.Delta)
-		value, _ := h.storage.Counter(metric.ID)
+		value, err := h.storage.AddCounter(req.Context(), metric.ID, *metric.Delta)
+		if err != nil {
+			h.storageError(resp, err)
+			return
+		}
 		metric.Delta = &value
 	default:
 		http.Error(resp, "Wrong metric type", http.StatusBadRequest)
@@ -136,7 +148,11 @@ func (h *Handler) Value(resp http.ResponseWriter, req *http.Request) {
 
 	switch metric.MType {
 	case models.Gauge:
-		value, found := h.storage.Gauge(metric.ID)
+		value, found, err := h.storage.Gauge(req.Context(), metric.ID)
+		if err != nil {
+			h.storageError(resp, err)
+			return
+		}
 		if !found {
 			logger.Log.Warn("metric not found", zap.String("id", metric.ID), zap.String("type", metric.MType))
 			http.NotFound(resp, req)
@@ -144,7 +160,11 @@ func (h *Handler) Value(resp http.ResponseWriter, req *http.Request) {
 		}
 		metric.Value = &value
 	case models.Counter:
-		value, found := h.storage.Counter(metric.ID)
+		value, found, err := h.storage.Counter(req.Context(), metric.ID)
+		if err != nil {
+			h.storageError(resp, err)
+			return
+		}
 		if !found {
 			logger.Log.Warn("metric not found", zap.String("id", metric.ID), zap.String("type", metric.MType))
 			http.NotFound(resp, req)
@@ -189,7 +209,11 @@ func writeMetric(resp http.ResponseWriter, metric models.Metrics) {
 }
 
 func (h *Handler) AllMetrics(resp http.ResponseWriter, req *http.Request) {
-	gauges, counters := h.storage.AllMetrics()
+	gauges, counters, err := h.storage.AllMetrics(req.Context())
+	if err != nil {
+		h.storageError(resp, err)
+		return
+	}
 
 	var body strings.Builder
 	body.WriteString("<!doctype html><html><body><h2>Gauge</h2>")
@@ -223,14 +247,22 @@ func (h *Handler) ValuePath(resp http.ResponseWriter, req *http.Request) {
 	var value string
 	switch metricType {
 	case models.Gauge:
-		metricValue, ok := h.storage.Gauge(metricName)
+		metricValue, ok, err := h.storage.Gauge(req.Context(), metricName)
+		if err != nil {
+			h.storageError(resp, err)
+			return
+		}
 		if !ok {
 			http.NotFound(resp, req)
 			return
 		}
 		value = strconv.FormatFloat(metricValue, 'g', -1, 64)
 	case models.Counter:
-		metricValue, ok := h.storage.Counter(metricName)
+		metricValue, ok, err := h.storage.Counter(req.Context(), metricName)
+		if err != nil {
+			h.storageError(resp, err)
+			return
+		}
 		if !ok {
 			http.NotFound(resp, req)
 			return
@@ -244,4 +276,9 @@ func (h *Handler) ValuePath(resp http.ResponseWriter, req *http.Request) {
 	resp.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	resp.WriteHeader(http.StatusOK)
 	_, _ = resp.Write([]byte(value))
+}
+
+func (h *Handler) storageError(resp http.ResponseWriter, err error) {
+	logger.Log.Error("storage operation failed", zap.Error(err))
+	http.Error(resp, "Storage operation failed", http.StatusInternalServerError)
 }
