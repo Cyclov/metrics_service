@@ -125,6 +125,51 @@ func (h *Handler) Update(resp http.ResponseWriter, req *http.Request) {
 	writeMetric(resp, metric)
 }
 
+func (h *Handler) Updates(resp http.ResponseWriter, req *http.Request) {
+	defer req.Body.Close()
+
+	var metrics []models.Metrics
+	if err := json.NewDecoder(req.Body).Decode(&metrics); err != nil {
+		http.Error(resp, "Invalid JSON", http.StatusBadRequest)
+		return
+	}
+
+	for _, metric := range metrics {
+		if !validateMetricIdentity(resp, metric) {
+			return
+		}
+		switch metric.MType {
+		case models.Gauge:
+			if metric.Value == nil {
+				http.Error(resp, "Gauge value is required", http.StatusBadRequest)
+				return
+			}
+		case models.Counter:
+			if metric.Delta == nil {
+				http.Error(resp, "Counter delta is required", http.StatusBadRequest)
+				return
+			}
+		default:
+			http.Error(resp, "Wrong metric type", http.StatusBadRequest)
+			return
+		}
+	}
+
+	if len(metrics) == 0 {
+		resp.WriteHeader(http.StatusOK)
+		return
+	}
+	if err := h.storage.UpdateBatch(req.Context(), metrics); err != nil {
+		h.storageError(resp, err)
+		return
+	}
+	if !h.storeMetrics(resp) {
+		return
+	}
+
+	resp.WriteHeader(http.StatusOK)
+}
+
 func (h *Handler) storeMetrics(resp http.ResponseWriter) bool {
 	if h.onUpdate == nil {
 		return true

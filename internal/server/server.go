@@ -66,6 +66,7 @@ func Run(ctx context.Context, cfg config.ServerSettings) error {
 	router.Use(logger.RequestLogger)
 	router.Use(handler.GzipMiddleware)
 	router.Post("/update/", h.Update)
+	router.Post("/updates/", h.Updates)
 	router.Post("/value/", h.Value)
 	router.Post("/update/{type}/{name}/{value}", h.UpdatePath)
 	router.Get("/value/{type}/{name}", h.ValuePath)

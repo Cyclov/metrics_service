@@ -67,6 +67,18 @@ func (s *storageMock) AddCounter(_ context.Context, name string, value int64) (i
 	return s.counters[name], nil
 }
 
+func (s *storageMock) UpdateBatch(_ context.Context, metrics []models.Metrics) error {
+	for _, metric := range metrics {
+		switch metric.MType {
+		case models.Gauge:
+			s.gauges[metric.ID] = *metric.Value
+		case models.Counter:
+			s.counters[metric.ID] += *metric.Delta
+		}
+	}
+	return nil
+}
+
 func (s *storageMock) Gauge(_ context.Context, name string) (float64, bool, error) {
 	value, ok := s.gauges[name]
 	return value, ok, nil
@@ -214,6 +226,44 @@ func TestAllMetrics(t *testing.T) {
 	}
 }
 
+func TestUpdates(t *testing.T) {
+	storage := newStorageMock()
+	h := New(storage, nil)
+	value := 12.5
+	delta := int64(3)
+	body, err := json.Marshal([]models.Metrics{
+		{ID: "Alloc", MType: models.Gauge, Value: &value},
+		{ID: "PollCount", MType: models.Counter, Delta: &delta},
+	})
+	require.NoError(t, err)
+
+	req := httptest.NewRequest(http.MethodPost, "/updates/", bytes.NewReader(body))
+	rec := httptest.NewRecorder()
+	h.Updates(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	assert.Equal(t, value, storage.gauges["Alloc"])
+	assert.Equal(t, delta, storage.counters["PollCount"])
+}
+
+func TestUpdatesRejectsWholeInvalidBatch(t *testing.T) {
+	storage := newStorageMock()
+	h := New(storage, nil)
+	value := 12.5
+	body, err := json.Marshal([]models.Metrics{
+		{ID: "Alloc", MType: models.Gauge, Value: &value},
+		{ID: "Broken", MType: models.Counter},
+	})
+	require.NoError(t, err)
+
+	req := httptest.NewRequest(http.MethodPost, "/updates/", bytes.NewReader(body))
+	rec := httptest.NewRecorder()
+	h.Updates(rec, req)
+
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
+	assert.Empty(t, storage.gauges)
+}
+
 func TestJSONEndpoints(t *testing.T) {
 	storage := &storageMock{
 		gauges:   make(map[string]float64),
@@ -308,6 +358,7 @@ func TestAgentUpdateAndValueIntegration(t *testing.T) {
 	router := chi.NewRouter()
 	router.Use(GzipMiddleware)
 	router.Post("/update/", h.Update)
+	router.Post("/updates/", h.Updates)
 	router.Post("/value/", h.Value)
 	server := httptest.NewServer(router)
 	defer server.Close()

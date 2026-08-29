@@ -43,20 +43,22 @@ func metricsByID(metrics []models.Metrics) map[string]models.Metrics {
 
 func TestSenderSend(t *testing.T) {
 	var mu sync.Mutex
+	requestCount := 0
 	var received []models.Metrics
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, http.MethodPost, r.Method)
-		assert.Equal(t, "/update/", r.URL.Path)
+		assert.Equal(t, "/updates/", r.URL.Path)
 		assert.Equal(t, "application/json", r.Header.Get("Content-Type"))
 		assert.Equal(t, "gzip", r.Header.Get("Content-Encoding"))
 		assert.Contains(t, r.Header.Get("Accept-Encoding"), "gzip")
 		zr, err := gzip.NewReader(r.Body)
 		require.NoError(t, err)
 		defer zr.Close()
-		var metric models.Metrics
-		require.NoError(t, json.NewDecoder(zr).Decode(&metric))
+		var metrics []models.Metrics
+		require.NoError(t, json.NewDecoder(zr).Decode(&metrics))
 		mu.Lock()
-		received = append(received, metric)
+		requestCount++
+		received = append(received, metrics...)
 		mu.Unlock()
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
@@ -74,6 +76,7 @@ func TestSenderSend(t *testing.T) {
 	})
 	require.NoError(t, err)
 
+	assert.Equal(t, 1, requestCount)
 	require.Len(t, received, 2)
 	assert.Equal(t, "Alloc", received[0].ID)
 	assert.Equal(t, models.Gauge, received[0].MType)
@@ -83,4 +86,17 @@ func TestSenderSend(t *testing.T) {
 	assert.Equal(t, models.Counter, received[1].MType)
 	require.NotNil(t, received[1].Delta)
 	assert.Equal(t, int64(3), *received[1].Delta)
+}
+
+func TestSenderDoesNotSendEmptyBatch(t *testing.T) {
+	requestCount := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requestCount++
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	sender := NewSender(server.URL, resty.New().SetTransport(server.Client().Transport))
+	require.NoError(t, sender.Send(nil))
+	assert.Zero(t, requestCount)
 }

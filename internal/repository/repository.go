@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"sort"
 	"sync"
@@ -14,6 +15,7 @@ import (
 type Storage interface {
 	SetGauge(context.Context, string, float64) error
 	AddCounter(context.Context, string, int64) (int64, error)
+	UpdateBatch(context.Context, []models.Metrics) error
 	Gauge(context.Context, string) (float64, bool, error)
 	Counter(context.Context, string) (int64, bool, error)
 	AllMetrics(context.Context) (map[string]float64, map[string]int64, error)
@@ -116,6 +118,46 @@ func (storage *MemStorage) SetGauge(ctx context.Context, name string, value floa
 	storage.mu.Lock()
 	defer storage.mu.Unlock()
 	storage.gauge[name] = value
+	return nil
+}
+
+func (storage *MemStorage) UpdateBatch(ctx context.Context, metrics []models.Metrics) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if err := validateBatch(metrics); err != nil {
+		return err
+	}
+
+	storage.mu.Lock()
+	defer storage.mu.Unlock()
+
+	for _, metric := range metrics {
+		switch metric.MType {
+		case models.Gauge:
+			storage.gauge[metric.ID] = *metric.Value
+		case models.Counter:
+			storage.counter[metric.ID] += *metric.Delta
+		}
+	}
+	return nil
+}
+
+func validateBatch(metrics []models.Metrics) error {
+	for _, metric := range metrics {
+		switch metric.MType {
+		case models.Gauge:
+			if metric.Value == nil {
+				return fmt.Errorf("gauge %q has no value", metric.ID)
+			}
+		case models.Counter:
+			if metric.Delta == nil {
+				return fmt.Errorf("counter %q has no delta", metric.ID)
+			}
+		default:
+			return fmt.Errorf("unsupported metric type %q", metric.MType)
+		}
+	}
 	return nil
 }
 

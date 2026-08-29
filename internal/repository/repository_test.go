@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	models "github.com/Cyclov/metrics_service/internal/model"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -33,4 +34,39 @@ func TestMemStorageSaveAndLoad(t *testing.T) {
 func TestMemStorageLoadMissingFile(t *testing.T) {
 	storage := NewMemStorage()
 	require.NoError(t, storage.Load(filepath.Join(t.TempDir(), "missing.json")))
+}
+
+func TestMemStorageUpdateBatch(t *testing.T) {
+	storage := NewMemStorage()
+	gauge := 12.5
+	delta1 := int64(2)
+	delta2 := int64(3)
+
+	require.NoError(t, storage.UpdateBatch(context.Background(), []models.Metrics{
+		{ID: "Alloc", MType: models.Gauge, Value: &gauge},
+		{ID: "PollCount", MType: models.Counter, Delta: &delta1},
+		{ID: "PollCount", MType: models.Counter, Delta: &delta2},
+	}))
+
+	storedGauge, found, err := storage.Gauge(context.Background(), "Alloc")
+	require.NoError(t, err)
+	require.True(t, found)
+	assert.Equal(t, gauge, storedGauge)
+	storedCounter, found, err := storage.Counter(context.Background(), "PollCount")
+	require.NoError(t, err)
+	require.True(t, found)
+	assert.Equal(t, int64(5), storedCounter)
+}
+
+func TestMemStorageRejectsWholeInvalidBatch(t *testing.T) {
+	storage := NewMemStorage()
+	gauge := 12.5
+	err := storage.UpdateBatch(context.Background(), []models.Metrics{
+		{ID: "Alloc", MType: models.Gauge, Value: &gauge},
+		{ID: "Broken", MType: models.Counter},
+	})
+	require.Error(t, err)
+	_, found, getErr := storage.Gauge(context.Background(), "Alloc")
+	require.NoError(t, getErr)
+	assert.False(t, found)
 }

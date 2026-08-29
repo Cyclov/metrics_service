@@ -108,24 +108,21 @@ func NewSender(baseURL string, client *resty.Client) *Sender {
 }
 
 func (s *Sender) Send(metrics []models.Metrics) error {
-	for _, metric := range metrics {
-		if err := s.post(metric); err != nil {
-			return err
-		}
+	if len(metrics) == 0 {
+		return nil
 	}
-
-	return nil
+	return s.post(metrics)
 }
 
-func (s *Sender) post(metric models.Metrics) error {
+func (s *Sender) post(metrics []models.Metrics) error {
 	var body bytes.Buffer
 	zw := gzip.NewWriter(&body)
-	if err := json.NewEncoder(zw).Encode(metric); err != nil {
+	if err := json.NewEncoder(zw).Encode(metrics); err != nil {
 		_ = zw.Close()
-		return fmt.Errorf("encode metric %q: %w", metric.ID, err)
+		return fmt.Errorf("encode metrics batch: %w", err)
 	}
 	if err := zw.Close(); err != nil {
-		return fmt.Errorf("compress metric %q: %w", metric.ID, err)
+		return fmt.Errorf("compress metrics batch: %w", err)
 	}
 
 	resp, err := s.client.R().
@@ -133,7 +130,7 @@ func (s *Sender) post(metric models.Metrics) error {
 		SetHeader("Content-Encoding", "gzip").
 		SetHeader("Accept-Encoding", "gzip").
 		SetBody(body.Bytes()).
-		Post(s.baseURL + "/update/")
+		Post(s.baseURL + "/updates/")
 
 	if err != nil {
 		return err

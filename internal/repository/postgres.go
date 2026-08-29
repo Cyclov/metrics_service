@@ -3,6 +3,8 @@ package repository
 import (
 	"context"
 	"database/sql"
+
+	models "github.com/Cyclov/metrics_service/internal/model"
 )
 
 type PostgresStorage struct{ db *sql.DB }
@@ -23,6 +25,33 @@ func (s *PostgresStorage) AddCounter(ctx context.Context, name string, delta int
 		ON CONFLICT (name) DO UPDATE SET value = counters.value + EXCLUDED.value
 		RETURNING value`, name, delta).Scan(&value)
 	return value, err
+}
+
+func (s *PostgresStorage) UpdateBatch(ctx context.Context, metrics []models.Metrics) error {
+	if err := validateBatch(metrics); err != nil {
+		return err
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	for _, metric := range metrics {
+		switch metric.MType {
+		case models.Gauge:
+			_, err = tx.ExecContext(ctx, `INSERT INTO gauges (name, value) VALUES ($1, $2)
+				ON CONFLICT (name) DO UPDATE SET value = EXCLUDED.value`, metric.ID, *metric.Value)
+		case models.Counter:
+			_, err = tx.ExecContext(ctx, `INSERT INTO counters (name, value) VALUES ($1, $2)
+				ON CONFLICT (name) DO UPDATE SET value = counters.value + EXCLUDED.value`, metric.ID, *metric.Delta)
+		}
+		if err != nil {
+			return err
+		}
+	}
+
+	return tx.Commit()
 }
 
 func (s *PostgresStorage) Gauge(ctx context.Context, name string) (float64, bool, error) {
