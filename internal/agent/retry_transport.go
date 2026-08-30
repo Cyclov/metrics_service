@@ -23,6 +23,9 @@ func newRetryingTransport(next http.RoundTripper, delays []time.Duration) http.R
 
 func (t *retryingTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	for attempt := 0; ; attempt++ {
+		if err := req.Context().Err(); err != nil {
+			return nil, err
+		}
 		attemptReq, err := requestForAttempt(req, attempt)
 		if err != nil {
 			return nil, err
@@ -71,6 +74,9 @@ func isRetriableTransportError(err error) bool {
 }
 
 func waitForRetry(ctx context.Context, delay time.Duration) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	timer := time.NewTimer(delay)
 	defer timer.Stop()
 	select {
