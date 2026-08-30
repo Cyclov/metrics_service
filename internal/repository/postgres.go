@@ -71,7 +71,7 @@ func (s *PostgresStorage) Gauge(ctx context.Context, name string) (float64, bool
 	err := retryPostgres(ctx, func() error {
 		return s.db.QueryRowContext(ctx, `SELECT value FROM gauges WHERE name = $1`, name).Scan(&value)
 	})
-	if err == sql.ErrNoRows {
+	if errors.Is(err, sql.ErrNoRows) {
 		return 0, false, nil
 	}
 	return value, err == nil, err
@@ -82,7 +82,7 @@ func (s *PostgresStorage) Counter(ctx context.Context, name string) (int64, bool
 	err := retryPostgres(ctx, func() error {
 		return s.db.QueryRowContext(ctx, `SELECT value FROM counters WHERE name = $1`, name).Scan(&value)
 	})
-	if err == sql.ErrNoRows {
+	if errors.Is(err, sql.ErrNoRows) {
 		return 0, false, nil
 	}
 	return value, err == nil, err
@@ -161,5 +161,6 @@ func retryPostgres(ctx context.Context, operation func() error) error {
 
 func isRetriablePostgresError(err error) bool {
 	var pgErr *pgconn.PgError
-	return errors.As(err, &pgErr) && pgerrcode.IsConnectionException(pgErr.Code)
+	return errors.As(err, &pgErr) && (pgerrcode.IsConnectionException(pgErr.Code) ||
+		pgerrcode.IsTransactionRollback(pgErr.Code))
 }

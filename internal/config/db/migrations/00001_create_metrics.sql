@@ -1,10 +1,10 @@
 -- +goose Up
 CREATE TABLE IF NOT EXISTS gauges (
-    name TEXT PRIMARY KEY,
+    name VARCHAR(255) PRIMARY KEY,
     value DOUBLE PRECISION NOT NULL
 );
 CREATE TABLE IF NOT EXISTS counters (
-    name TEXT PRIMARY KEY,
+    name VARCHAR(255) PRIMARY KEY,
     value BIGINT NOT NULL
 );
 

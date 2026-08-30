@@ -110,6 +110,8 @@ func TestRetryPostgresRetriesAllConnectionErrors(t *testing.T) {
 func TestPostgresRetryClassification(t *testing.T) {
 	assert.True(t, isRetriablePostgresError(&pgconn.PgError{Code: pgerrcode.ConnectionFailure}))
 	assert.True(t, isRetriablePostgresError(&pgconn.PgError{Code: pgerrcode.TransactionResolutionUnknown}))
+	assert.True(t, isRetriablePostgresError(&pgconn.PgError{Code: pgerrcode.SerializationFailure}))
+	assert.True(t, isRetriablePostgresError(&pgconn.PgError{Code: pgerrcode.DeadlockDetected}))
 	assert.False(t, isRetriablePostgresError(&pgconn.PgError{Code: pgerrcode.UniqueViolation}))
 	assert.False(t, isRetriablePostgresError(errors.New("ordinary error")))
 }

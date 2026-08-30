@@ -1,7 +1,10 @@
 package main
 
 import (
+	"context"
 	"log"
+	"os/signal"
+	"syscall"
 	"time"
 
 	"github.com/Cyclov/metrics_service/internal/agent"
@@ -16,8 +19,11 @@ func main() {
 
 	collector := agent.NewCollector()
 	sender := agent.NewSender("http://"+cfg.SrvAdr, nil)
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
 
 	if err := agent.Run(
+		ctx,
 		collector,
 		sender,
 		time.Duration(cfg.PollInterval)*time.Second,

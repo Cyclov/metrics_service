@@ -37,7 +37,12 @@ func New(storage repository.Storage, onUpdate func() error, database ...Database
 }
 
 func (h *Handler) Ping(resp http.ResponseWriter, req *http.Request) {
-	if h.database == nil || h.database.PingContext(req.Context()) != nil {
+	if h.database == nil {
+		resp.WriteHeader(http.StatusOK)
+		return
+	}
+	if err := h.database.PingContext(req.Context()); err != nil {
+		logger.Log.Error("database ping failed", zap.Error(err))
 		resp.WriteHeader(http.StatusInternalServerError)
 		return
 	}

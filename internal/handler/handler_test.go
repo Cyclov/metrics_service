@@ -33,7 +33,7 @@ func TestPing(t *testing.T) {
 	}{
 		{name: "connected", configured: true, wantStatus: http.StatusOK},
 		{name: "connection error", configured: true, pingErr: errors.New("connection lost"), wantStatus: http.StatusInternalServerError},
-		{name: "database not configured", wantStatus: http.StatusInternalServerError},
+		{name: "database not configured", wantStatus: http.StatusOK},
 	}
 
 	for _, tt := range tests {

@@ -151,6 +151,14 @@ func TestSenderStopsWhenContextIsCanceled(t *testing.T) {
 	assert.True(t, errors.Is(err, context.Canceled))
 }
 
+func TestRunStopsWhenContextIsCanceled(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	err := Run(ctx, NewCollector(), NewSender("http://metrics", resty.New()), time.Hour, time.Hour)
+	require.NoError(t, err)
+}
+
 type roundTripperFunc func(*http.Request) (*http.Response, error)
 
 func (fn roundTripperFunc) RoundTrip(req *http.Request) (*http.Response, error) { return fn(req) }

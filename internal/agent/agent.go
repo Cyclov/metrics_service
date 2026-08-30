@@ -7,10 +7,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"log"
 	"math/rand"
-	"net"
 	"runtime"
 	"sync"
 	"time"
@@ -105,10 +103,10 @@ type Sender struct {
 var sendRetryDelays = []time.Duration{time.Second, 3 * time.Second, 5 * time.Second}
 
 func NewSender(baseURL string, client *resty.Client) *Sender {
-
 	if client == nil {
 		client = resty.New().SetTimeout(5 * time.Second)
 	}
+	client.SetTransport(newRetryingTransport(client.GetClient().Transport, sendRetryDelays))
 
 	return &Sender{baseURL: baseURL, client: client}
 }
@@ -135,50 +133,23 @@ func (s *Sender) post(ctx context.Context, metrics []models.Metrics) error {
 		return fmt.Errorf("compress metrics batch: %w", err)
 	}
 
-	for attempt := 0; ; attempt++ {
-		resp, err := s.client.R().
-			SetContext(ctx).
-			SetHeader("Content-Type", "application/json").
-			SetHeader("Content-Encoding", "gzip").
-			SetHeader("Accept-Encoding", "gzip").
-			SetBody(body.Bytes()).
-			Post(s.baseURL + "/updates/")
-
-		if err == nil && resp.IsSuccess() {
-			return nil
-		}
-
-		retriable := err != nil && isRetriableTransportError(err)
-		if err == nil {
-			retriable = resp.StatusCode() == 502 || resp.StatusCode() == 503 || resp.StatusCode() == 504
-			err = fmt.Errorf("server returned status %s", resp.Status())
-		}
-		if !retriable || attempt == len(sendRetryDelays) {
-			return err
-		}
-		if err := waitForRetry(ctx, sendRetryDelays[attempt]); err != nil {
-			return err
-		}
+	resp, err := s.client.R().
+		SetContext(ctx).
+		SetHeader("Content-Type", "application/json").
+		SetHeader("Content-Encoding", "gzip").
+		SetHeader("Accept-Encoding", "gzip").
+		SetBody(body.Bytes()).
+		Post(s.baseURL + "/updates/")
+	if err != nil {
+		return err
 	}
-}
-
-func isRetriableTransportError(err error) bool {
-	var netErr net.Error
-	return errors.As(err, &netErr) || errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF)
-}
-
-func waitForRetry(ctx context.Context, delay time.Duration) error {
-	timer := time.NewTimer(delay)
-	defer timer.Stop()
-	select {
-	case <-ctx.Done():
-		return ctx.Err()
-	case <-timer.C:
-		return nil
+	if !resp.IsSuccess() {
+		return fmt.Errorf("server returned status %s", resp.Status())
 	}
+	return nil
 }
 
-func Run(collector *Collector, sender *Sender, pollInterval, reportInterval time.Duration) error {
+func Run(ctx context.Context, collector *Collector, sender *Sender, pollInterval, reportInterval time.Duration) error {
 
 	collector.Poll()
 	pollTicker := time.NewTicker(pollInterval)
@@ -189,10 +160,12 @@ func Run(collector *Collector, sender *Sender, pollInterval, reportInterval time
 
 	for {
 		select {
+		case <-ctx.Done():
+			return nil
 		case <-pollTicker.C:
 			collector.Poll()
 		case <-reportTicker.C:
-			if err := sender.Send(collector.CurrentMetrics()); err != nil {
+			if err := sender.SendContext(ctx, collector.CurrentMetrics()); err != nil && !errors.Is(err, context.Canceled) {
 				log.Printf("failed to send metrics: %v", err)
 			}
 		}
