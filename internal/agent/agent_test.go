@@ -2,11 +2,15 @@ package agent
 
 import (
 	"compress/gzip"
+	"context"
 	"encoding/json"
+	"errors"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"sync"
 	"testing"
+	"time"
 
 	models "github.com/Cyclov/metrics_service/internal/model"
 	"github.com/go-resty/resty/v2"
@@ -100,3 +104,53 @@ func TestSenderDoesNotSendEmptyBatch(t *testing.T) {
 	require.NoError(t, sender.Send(nil))
 	assert.Zero(t, requestCount)
 }
+
+func TestSenderRetriesTemporaryStatuses(t *testing.T) {
+	delays := sendRetryDelays
+	sendRetryDelays = []time.Duration{0, 0, 0}
+	t.Cleanup(func() { sendRetryDelays = delays })
+
+	statuses := []int{http.StatusBadGateway, http.StatusServiceUnavailable, http.StatusGatewayTimeout, http.StatusOK}
+	requestCount := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(statuses[requestCount])
+		requestCount++
+	}))
+	defer server.Close()
+
+	value := 1.0
+	sender := NewSender(server.URL, resty.New().SetTransport(server.Client().Transport))
+	require.NoError(t, sender.Send([]models.Metrics{{ID: "Alloc", MType: models.Gauge, Value: &value}}))
+	assert.Equal(t, 4, requestCount)
+}
+
+func TestSenderRetriesTransportError(t *testing.T) {
+	delays := sendRetryDelays
+	sendRetryDelays = []time.Duration{0, 0, 0}
+	t.Cleanup(func() { sendRetryDelays = delays })
+
+	requestCount := 0
+	client := resty.New().SetTransport(roundTripperFunc(func(*http.Request) (*http.Response, error) {
+		requestCount++
+		return nil, &net.DNSError{Err: "temporary DNS failure", IsTemporary: true}
+	}))
+	value := 1.0
+	err := NewSender("http://metrics", client).Send([]models.Metrics{{ID: "Alloc", MType: models.Gauge, Value: &value}})
+	require.Error(t, err)
+	assert.Equal(t, 4, requestCount)
+}
+
+func TestSenderStopsWhenContextIsCanceled(t *testing.T) {
+	client := resty.New().SetTransport(roundTripperFunc(func(*http.Request) (*http.Response, error) {
+		return nil, &net.DNSError{Err: "temporary DNS failure", IsTemporary: true}
+	}))
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	value := 1.0
+	err := NewSender("http://metrics", client).SendContext(ctx, []models.Metrics{{ID: "Alloc", MType: models.Gauge, Value: &value}})
+	assert.True(t, errors.Is(err, context.Canceled))
+}
+
+type roundTripperFunc func(*http.Request) (*http.Response, error)
+
+func (fn roundTripperFunc) RoundTrip(req *http.Request) (*http.Response, error) { return fn(req) }

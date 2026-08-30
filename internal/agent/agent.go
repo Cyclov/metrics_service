@@ -3,10 +3,14 @@ package agent
 import (
 	"bytes"
 	"compress/gzip"
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"log"
 	"math/rand"
+	"net"
 	"runtime"
 	"sync"
 	"time"
@@ -98,6 +102,8 @@ type Sender struct {
 	client  *resty.Client
 }
 
+var sendRetryDelays = []time.Duration{time.Second, 3 * time.Second, 5 * time.Second}
+
 func NewSender(baseURL string, client *resty.Client) *Sender {
 
 	if client == nil {
@@ -108,13 +114,17 @@ func NewSender(baseURL string, client *resty.Client) *Sender {
 }
 
 func (s *Sender) Send(metrics []models.Metrics) error {
+	return s.SendContext(context.Background(), metrics)
+}
+
+func (s *Sender) SendContext(ctx context.Context, metrics []models.Metrics) error {
 	if len(metrics) == 0 {
 		return nil
 	}
-	return s.post(metrics)
+	return s.post(ctx, metrics)
 }
 
-func (s *Sender) post(metrics []models.Metrics) error {
+func (s *Sender) post(ctx context.Context, metrics []models.Metrics) error {
 	var body bytes.Buffer
 	zw := gzip.NewWriter(&body)
 	if err := json.NewEncoder(zw).Encode(metrics); err != nil {
@@ -125,22 +135,47 @@ func (s *Sender) post(metrics []models.Metrics) error {
 		return fmt.Errorf("compress metrics batch: %w", err)
 	}
 
-	resp, err := s.client.R().
-		SetHeader("Content-Type", "application/json").
-		SetHeader("Content-Encoding", "gzip").
-		SetHeader("Accept-Encoding", "gzip").
-		SetBody(body.Bytes()).
-		Post(s.baseURL + "/updates/")
+	for attempt := 0; ; attempt++ {
+		resp, err := s.client.R().
+			SetContext(ctx).
+			SetHeader("Content-Type", "application/json").
+			SetHeader("Content-Encoding", "gzip").
+			SetHeader("Accept-Encoding", "gzip").
+			SetBody(body.Bytes()).
+			Post(s.baseURL + "/updates/")
 
-	if err != nil {
-		return err
+		if err == nil && resp.IsSuccess() {
+			return nil
+		}
+
+		retriable := err != nil && isRetriableTransportError(err)
+		if err == nil {
+			retriable = resp.StatusCode() == 502 || resp.StatusCode() == 503 || resp.StatusCode() == 504
+			err = fmt.Errorf("server returned status %s", resp.Status())
+		}
+		if !retriable || attempt == len(sendRetryDelays) {
+			return err
+		}
+		if err := waitForRetry(ctx, sendRetryDelays[attempt]); err != nil {
+			return err
+		}
 	}
+}
 
-	if !resp.IsSuccess() {
-		return fmt.Errorf("server returned status %s", resp.Status())
+func isRetriableTransportError(err error) bool {
+	var netErr net.Error
+	return errors.As(err, &netErr) || errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF)
+}
+
+func waitForRetry(ctx context.Context, delay time.Duration) error {
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
 	}
-
-	return nil
 }
 
 func Run(collector *Collector, sender *Sender, pollInterval, reportInterval time.Duration) error {

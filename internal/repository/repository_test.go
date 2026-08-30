@@ -2,10 +2,15 @@ package repository
 
 import (
 	"context"
+	"errors"
 	"path/filepath"
+	"strings"
 	"testing"
+	"time"
 
 	models "github.com/Cyclov/metrics_service/internal/model"
+	"github.com/jackc/pgerrcode"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -69,4 +74,42 @@ func TestMemStorageRejectsWholeInvalidBatch(t *testing.T) {
 	_, found, getErr := storage.Gauge(context.Background(), "Alloc")
 	require.NoError(t, getErr)
 	assert.False(t, found)
+}
+
+func TestValidateBatchJoinsAllErrors(t *testing.T) {
+	err := ValidateBatch([]models.Metrics{
+		{MType: models.Gauge},
+		{ID: "PollCount", MType: models.Counter},
+		{ID: "Broken", MType: "histogram"},
+	})
+	require.Error(t, err)
+	for _, fragment := range []string{
+		"metric[0]: metric ID is required",
+		"gauge \"\" has no value",
+		"metric[1]: counter \"PollCount\" has no delta",
+		"metric[2]: unsupported metric type \"histogram\"",
+	} {
+		assert.True(t, strings.Contains(err.Error(), fragment), "missing %q in %q", fragment, err)
+	}
+}
+
+func TestRetryPostgresRetriesAllConnectionErrors(t *testing.T) {
+	delays := postgresRetryDelays
+	postgresRetryDelays = []time.Duration{0, 0, 0}
+	t.Cleanup(func() { postgresRetryDelays = delays })
+
+	attempts := 0
+	err := retryPostgres(context.Background(), func() error {
+		attempts++
+		return &pgconn.PgError{Code: pgerrcode.TransactionResolutionUnknown}
+	})
+	require.Error(t, err)
+	assert.Equal(t, 4, attempts)
+}
+
+func TestPostgresRetryClassification(t *testing.T) {
+	assert.True(t, isRetriablePostgresError(&pgconn.PgError{Code: pgerrcode.ConnectionFailure}))
+	assert.True(t, isRetriablePostgresError(&pgconn.PgError{Code: pgerrcode.TransactionResolutionUnknown}))
+	assert.False(t, isRetriablePostgresError(&pgconn.PgError{Code: pgerrcode.UniqueViolation}))
+	assert.False(t, isRetriablePostgresError(errors.New("ordinary error")))
 }

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"sort"
+	"strings"
 	"sync"
 
 	models "github.com/Cyclov/metrics_service/internal/model"
@@ -144,22 +145,32 @@ func (storage *MemStorage) UpdateBatch(ctx context.Context, metrics []models.Met
 }
 
 func validateBatch(metrics []models.Metrics) error {
-	for _, metric := range metrics {
+	var validationErr error
+	for index, metric := range metrics {
+		var metricErr error
+		if strings.TrimSpace(metric.ID) == "" {
+			metricErr = errors.Join(metricErr, errors.New("metric ID is required"))
+		}
 		switch metric.MType {
 		case models.Gauge:
 			if metric.Value == nil {
-				return fmt.Errorf("gauge %q has no value", metric.ID)
+				metricErr = errors.Join(metricErr, fmt.Errorf("gauge %q has no value", metric.ID))
 			}
 		case models.Counter:
 			if metric.Delta == nil {
-				return fmt.Errorf("counter %q has no delta", metric.ID)
+				metricErr = errors.Join(metricErr, fmt.Errorf("counter %q has no delta", metric.ID))
 			}
 		default:
-			return fmt.Errorf("unsupported metric type %q", metric.MType)
+			metricErr = errors.Join(metricErr, fmt.Errorf("unsupported metric type %q", metric.MType))
+		}
+		if metricErr != nil {
+			validationErr = errors.Join(validationErr, fmt.Errorf("metric[%d]: %w", index, metricErr))
 		}
 	}
-	return nil
+	return validationErr
 }
+
+func ValidateBatch(metrics []models.Metrics) error { return validateBatch(metrics) }
 
 func (storage *MemStorage) Gauge(ctx context.Context, name string) (float64, bool, error) {
 	if err := ctx.Err(); err != nil {

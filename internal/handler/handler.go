@@ -134,25 +134,9 @@ func (h *Handler) Updates(resp http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	for _, metric := range metrics {
-		if !validateMetricIdentity(resp, metric) {
-			return
-		}
-		switch metric.MType {
-		case models.Gauge:
-			if metric.Value == nil {
-				http.Error(resp, "Gauge value is required", http.StatusBadRequest)
-				return
-			}
-		case models.Counter:
-			if metric.Delta == nil {
-				http.Error(resp, "Counter delta is required", http.StatusBadRequest)
-				return
-			}
-		default:
-			http.Error(resp, "Wrong metric type", http.StatusBadRequest)
-			return
-		}
+	if err := repository.ValidateBatch(metrics); err != nil {
+		http.Error(resp, err.Error(), http.StatusBadRequest)
+		return
 	}
 
 	if len(metrics) == 0 {

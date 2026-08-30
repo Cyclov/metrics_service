@@ -3,8 +3,12 @@ package repository
 import (
 	"context"
 	"database/sql"
+	"errors"
+	"time"
 
 	models "github.com/Cyclov/metrics_service/internal/model"
+	"github.com/jackc/pgerrcode"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 type PostgresStorage struct{ db *sql.DB }
@@ -14,16 +18,20 @@ var _ Storage = (*PostgresStorage)(nil)
 func NewPostgresStorage(db *sql.DB) *PostgresStorage { return &PostgresStorage{db: db} }
 
 func (s *PostgresStorage) SetGauge(ctx context.Context, name string, value float64) error {
-	_, err := s.db.ExecContext(ctx, `INSERT INTO gauges (name, value) VALUES ($1, $2)
-		ON CONFLICT (name) DO UPDATE SET value = EXCLUDED.value`, name, value)
-	return err
+	return retryPostgres(ctx, func() error {
+		_, err := s.db.ExecContext(ctx, `INSERT INTO gauges (name, value) VALUES ($1, $2)
+			ON CONFLICT (name) DO UPDATE SET value = EXCLUDED.value`, name, value)
+		return err
+	})
 }
 
 func (s *PostgresStorage) AddCounter(ctx context.Context, name string, delta int64) (int64, error) {
 	var value int64
-	err := s.db.QueryRowContext(ctx, `INSERT INTO counters (name, value) VALUES ($1, $2)
-		ON CONFLICT (name) DO UPDATE SET value = counters.value + EXCLUDED.value
-		RETURNING value`, name, delta).Scan(&value)
+	err := retryPostgres(ctx, func() error {
+		return s.db.QueryRowContext(ctx, `INSERT INTO counters (name, value) VALUES ($1, $2)
+			ON CONFLICT (name) DO UPDATE SET value = counters.value + EXCLUDED.value
+			RETURNING value`, name, delta).Scan(&value)
+	})
 	return value, err
 }
 
@@ -31,6 +39,10 @@ func (s *PostgresStorage) UpdateBatch(ctx context.Context, metrics []models.Metr
 	if err := validateBatch(metrics); err != nil {
 		return err
 	}
+	return retryPostgres(ctx, func() error { return s.updateBatchOnce(ctx, metrics) })
+}
+
+func (s *PostgresStorage) updateBatchOnce(ctx context.Context, metrics []models.Metrics) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -56,7 +68,9 @@ func (s *PostgresStorage) UpdateBatch(ctx context.Context, metrics []models.Metr
 
 func (s *PostgresStorage) Gauge(ctx context.Context, name string) (float64, bool, error) {
 	var value float64
-	err := s.db.QueryRowContext(ctx, `SELECT value FROM gauges WHERE name = $1`, name).Scan(&value)
+	err := retryPostgres(ctx, func() error {
+		return s.db.QueryRowContext(ctx, `SELECT value FROM gauges WHERE name = $1`, name).Scan(&value)
+	})
 	if err == sql.ErrNoRows {
 		return 0, false, nil
 	}
@@ -65,7 +79,9 @@ func (s *PostgresStorage) Gauge(ctx context.Context, name string) (float64, bool
 
 func (s *PostgresStorage) Counter(ctx context.Context, name string) (int64, bool, error) {
 	var value int64
-	err := s.db.QueryRowContext(ctx, `SELECT value FROM counters WHERE name = $1`, name).Scan(&value)
+	err := retryPostgres(ctx, func() error {
+		return s.db.QueryRowContext(ctx, `SELECT value FROM counters WHERE name = $1`, name).Scan(&value)
+	})
 	if err == sql.ErrNoRows {
 		return 0, false, nil
 	}
@@ -73,6 +89,17 @@ func (s *PostgresStorage) Counter(ctx context.Context, name string) (int64, bool
 }
 
 func (s *PostgresStorage) AllMetrics(ctx context.Context) (map[string]float64, map[string]int64, error) {
+	var gauges map[string]float64
+	var counters map[string]int64
+	err := retryPostgres(ctx, func() error {
+		var err error
+		gauges, counters, err = s.allMetricsOnce(ctx)
+		return err
+	})
+	return gauges, counters, err
+}
+
+func (s *PostgresStorage) allMetricsOnce(ctx context.Context) (map[string]float64, map[string]int64, error) {
 	gauges := make(map[string]float64)
 	rows, err := s.db.QueryContext(ctx, `SELECT name, value FROM gauges ORDER BY name`)
 	if err != nil {
@@ -111,4 +138,28 @@ func (s *PostgresStorage) AllMetrics(ctx context.Context) (map[string]float64, m
 		return nil, nil, err
 	}
 	return gauges, counters, nil
+}
+
+var postgresRetryDelays = []time.Duration{time.Second, 3 * time.Second, 5 * time.Second}
+
+func retryPostgres(ctx context.Context, operation func() error) error {
+	for attempt := 0; ; attempt++ {
+		err := operation()
+		if err == nil || !isRetriablePostgresError(err) || attempt == len(postgresRetryDelays) {
+			return err
+		}
+
+		timer := time.NewTimer(postgresRetryDelays[attempt])
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return ctx.Err()
+		case <-timer.C:
+		}
+	}
+}
+
+func isRetriablePostgresError(err error) bool {
+	var pgErr *pgconn.PgError
+	return errors.As(err, &pgErr) && pgerrcode.IsConnectionException(pgErr.Code)
 }
