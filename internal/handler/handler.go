@@ -22,7 +22,7 @@ type Handler struct {
 
 // DatabasePinger describes a database connection health check.
 type DatabasePinger interface {
-	PingContext(context.Context) error
+	Ping(context.Context) error
 }
 
 func New(storage repository.Storage, onUpdate func() error, database ...DatabasePinger) *Handler {
@@ -41,7 +41,7 @@ func (h *Handler) Ping(resp http.ResponseWriter, req *http.Request) {
 		resp.WriteHeader(http.StatusOK)
 		return
 	}
-	if err := h.database.PingContext(req.Context()); err != nil {
+	if err := h.database.Ping(req.Context()); err != nil {
 		logger.Log.Error("database ping failed", zap.Error(err))
 		resp.WriteHeader(http.StatusInternalServerError)
 		return

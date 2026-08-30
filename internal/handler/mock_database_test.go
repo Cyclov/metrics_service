@@ -40,16 +40,16 @@ func (m *MockDatabasePinger) EXPECT() *MockDatabasePingerMockRecorder {
 	return m.recorder
 }
 
-// PingContext mocks base method.
-func (m *MockDatabasePinger) PingContext(arg0 context.Context) error {
+// Ping mocks base method.
+func (m *MockDatabasePinger) Ping(arg0 context.Context) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "PingContext", arg0)
+	ret := m.ctrl.Call(m, "Ping", arg0)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
-// PingContext indicates an expected call of PingContext.
-func (mr *MockDatabasePingerMockRecorder) PingContext(arg0 any) *gomock.Call {
+// Ping indicates an expected call of Ping.
+func (mr *MockDatabasePingerMockRecorder) Ping(arg0 any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "PingContext", reflect.TypeOf((*MockDatabasePinger)(nil).PingContext), arg0)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Ping", reflect.TypeOf((*MockDatabasePinger)(nil).Ping), arg0)
 }

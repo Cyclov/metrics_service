@@ -42,7 +42,7 @@ func TestPing(t *testing.T) {
 			var database []DatabasePinger
 			if tt.configured {
 				databaseMock := NewMockDatabasePinger(ctrl)
-				databaseMock.EXPECT().PingContext(gomock.Any()).Return(tt.pingErr)
+				databaseMock.EXPECT().Ping(gomock.Any()).Return(tt.pingErr)
 				database = append(database, databaseMock)
 			}
 

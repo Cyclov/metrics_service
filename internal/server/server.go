@@ -2,7 +2,6 @@ package server
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"net/http"
 	"sync"
@@ -14,11 +13,12 @@ import (
 	"github.com/Cyclov/metrics_service/internal/logger"
 	"github.com/Cyclov/metrics_service/internal/repository"
 	"github.com/go-chi/chi/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"go.uber.org/zap"
 )
 
 func Run(ctx context.Context, cfg config.ServerSettings) error {
-	var database *sql.DB
+	var database *pgxpool.Pool
 	var storage repository.Storage
 	if cfg.DbAdr != "" {
 		var err error
