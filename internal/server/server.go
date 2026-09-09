@@ -20,9 +20,9 @@ import (
 func Run(ctx context.Context, cfg config.ServerSettings) error {
 	var database *pgxpool.Pool
 	var storage repository.Storage
-	if cfg.DbAdr != "" {
+	if cfg.DBAdr != "" {
 		var err error
-		database, err = db.Connect(ctx, cfg.DbAdr)
+		database, err = db.Connect(ctx, cfg.DBAdr)
 		if err != nil {
 			return err
 		}
