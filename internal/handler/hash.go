@@ -9,8 +9,6 @@ import (
 	"net/http"
 )
 
-// HashMiddleware verifies requests before decoding and signs the final response
-// bytes. Register it before GzipMiddleware to sign compressed bodies on the wire.
 func HashMiddleware(key string) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		if key == "" {
@@ -26,15 +24,18 @@ func HashMiddleware(key string) func(http.Handler) http.Handler {
 	}
 }
 
-// verifyRequestHash restores a valid body for the next handler or writes a 400 response.
 func verifyRequestHash(w http.ResponseWriter, r *http.Request, key string) bool {
+	signature := r.Header.Get("HashSHA256")
+	if signature == "" {
+		return true
+	}
 	body, err := io.ReadAll(r.Body)
 	_ = r.Body.Close()
 	if err != nil {
 		http.Error(w, "Cannot read request body", http.StatusBadRequest)
 		return false
 	}
-	received, err := hex.DecodeString(r.Header.Get("HashSHA256"))
+	received, err := hex.DecodeString(signature)
 	if err != nil || !hmac.Equal(received, hashBody(body, key)) {
 		http.Error(w, "Invalid request hash", http.StatusBadRequest)
 		return false
@@ -49,7 +50,6 @@ func hashBody(body []byte, key string) []byte {
 	return mac.Sum(nil)
 }
 
-// Buffer the response so its signature is available before headers are sent.
 type hashResponseWriter struct {
 	header     http.Header
 	sentHeader http.Header

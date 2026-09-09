@@ -38,7 +38,8 @@ func TestHashMiddleware(t *testing.T) {
 		{name: "disabled", header: "invalid", wantStatus: http.StatusOK},
 		{name: "valid", key: "test-key", signKey: "test-key", wantStatus: http.StatusOK},
 		{name: "gzip", key: "test-key", signKey: "test-key", compressed: true, wantStatus: http.StatusOK},
-		{name: "missing", key: "test-key", wantStatus: http.StatusBadRequest},
+		{name: "missing", key: "test-key", wantStatus: http.StatusOK},
+		{name: "missing gzip", key: "test-key", compressed: true, wantStatus: http.StatusOK},
 		{name: "malformed", key: "test-key", header: "not-hex", wantStatus: http.StatusBadRequest},
 		{name: "wrong key", key: "test-key", signKey: "wrong-key", wantStatus: http.StatusBadRequest},
 		{name: "short hash", key: "test-key", header: "abcd", wantStatus: http.StatusBadRequest},
@@ -56,7 +57,9 @@ func TestHashMiddleware(t *testing.T) {
 				body = compressed.Bytes()
 			}
 			req := httptest.NewRequest(http.MethodPost, "/update/", bytes.NewReader(body))
-			req.Header.Set("HashSHA256", tt.header)
+			if tt.header != "" {
+				req.Header.Set("HashSHA256", tt.header)
+			}
 			if tt.signKey != "" {
 				req.Header.Set("HashSHA256", testSignature(body, tt.signKey))
 			}
@@ -72,6 +75,7 @@ func TestHashMiddleware(t *testing.T) {
 			assert.Equal(t, tt.wantStatus == http.StatusOK, found)
 			if found {
 				assert.Equal(t, 12.5, value)
+				assert.Contains(t, resp.Header().Get("Content-Type"), "application/json")
 			}
 			if tt.key == "" {
 				assert.Empty(t, resp.Header().Get("HashSHA256"))
@@ -103,6 +107,36 @@ func TestHashMiddlewareWithAgent(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, found)
 	assert.Equal(t, delta, value)
+}
+
+func TestHashMiddlewareUnsignedValueRequest(t *testing.T) {
+	for _, encoding := range []string{"identity", "gzip"} {
+		t.Run(encoding, func(t *testing.T) {
+			storage := repository.NewMemStorage()
+			require.NoError(t, storage.SetGauge(context.Background(), "Alloc", 12.5))
+			h := HashMiddleware("test-key")(GzipMiddleware(http.HandlerFunc(New(storage, nil).Value)))
+			req := httptest.NewRequest(http.MethodPost, "/value/", bytes.NewBufferString(`{"id":"Alloc","type":"gauge"}`))
+			req.Header.Set("Content-Type", "application/json")
+			req.Header.Set("Accept-Encoding", encoding)
+			req.Header.Set("Hash", "none")
+			resp := httptest.NewRecorder()
+			h.ServeHTTP(resp, req)
+			require.Equal(t, http.StatusOK, resp.Code)
+			assert.Contains(t, resp.Header().Get("Content-Type"), "application/json")
+			assert.Equal(t, testSignature(resp.Body.Bytes(), "test-key"), resp.Header().Get("HashSHA256"))
+			var body io.Reader = resp.Body
+			if encoding == "gzip" {
+				assert.Equal(t, "gzip", resp.Header().Get("Content-Encoding"))
+				zr, err := gzip.NewReader(body)
+				require.NoError(t, err)
+				defer zr.Close()
+				body = zr
+			}
+			decoded, err := io.ReadAll(body)
+			require.NoError(t, err)
+			assert.JSONEq(t, `{"id":"Alloc","type":"gauge","value":12.5}`, string(decoded))
+		})
+	}
 }
 
 func TestHashMiddlewareEmptyResponse(t *testing.T) {
