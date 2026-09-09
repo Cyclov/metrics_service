@@ -3,8 +3,12 @@ package agent
 import (
 	"compress/gzip"
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -71,7 +75,7 @@ func TestSenderSend(t *testing.T) {
 
 	client := resty.New().
 		SetTransport(server.Client().Transport)
-	sender := NewSender(server.URL, client)
+	sender := NewSender(server.URL, client, "")
 	value := 12.5
 	delta := int64(3)
 	err := sender.Send([]models.Metrics{
@@ -100,7 +104,7 @@ func TestSenderDoesNotSendEmptyBatch(t *testing.T) {
 	}))
 	defer server.Close()
 
-	sender := NewSender(server.URL, resty.New().SetTransport(server.Client().Transport))
+	sender := NewSender(server.URL, resty.New().SetTransport(server.Client().Transport), "")
 	require.NoError(t, sender.Send(nil))
 	assert.Zero(t, requestCount)
 }
@@ -119,7 +123,7 @@ func TestSenderRetriesTemporaryStatuses(t *testing.T) {
 	defer server.Close()
 
 	value := 1.0
-	sender := NewSender(server.URL, resty.New().SetTransport(server.Client().Transport))
+	sender := NewSender(server.URL, resty.New().SetTransport(server.Client().Transport), "")
 	require.NoError(t, sender.Send([]models.Metrics{{ID: "Alloc", MType: models.Gauge, Value: &value}}))
 	assert.Equal(t, 4, requestCount)
 }
@@ -135,7 +139,7 @@ func TestSenderRetriesTransportError(t *testing.T) {
 		return nil, &net.DNSError{Err: "temporary DNS failure", IsTemporary: true}
 	}))
 	value := 1.0
-	err := NewSender("http://metrics", client).Send([]models.Metrics{{ID: "Alloc", MType: models.Gauge, Value: &value}})
+	err := NewSender("http://metrics", client, "").Send([]models.Metrics{{ID: "Alloc", MType: models.Gauge, Value: &value}})
 	require.Error(t, err)
 	assert.Equal(t, 4, requestCount)
 }
@@ -147,7 +151,7 @@ func TestSenderStopsWhenContextIsCanceled(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	value := 1.0
-	err := NewSender("http://metrics", client).SendContext(ctx, []models.Metrics{{ID: "Alloc", MType: models.Gauge, Value: &value}})
+	err := NewSender("http://metrics", client, "").SendContext(ctx, []models.Metrics{{ID: "Alloc", MType: models.Gauge, Value: &value}})
 	assert.True(t, errors.Is(err, context.Canceled))
 }
 
@@ -155,10 +159,50 @@ func TestRunStopsWhenContextIsCanceled(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	err := Run(ctx, NewCollector(), NewSender("http://metrics", resty.New()), time.Hour, time.Hour)
+	err := Run(ctx, NewCollector(), NewSender("http://metrics", resty.New(), ""), time.Hour, time.Hour)
 	require.NoError(t, err)
 }
 
 type roundTripperFunc func(*http.Request) (*http.Response, error)
+
+func TestSenderHashSHA256(t *testing.T) {
+	delays := sendRetryDelays
+	sendRetryDelays = []time.Duration{0}
+	t.Cleanup(func() { sendRetryDelays = delays })
+	for _, key := range []string{"", "test-key", "another-test-key"} {
+		t.Run("key="+key, func(t *testing.T) {
+			requests := 0
+			var firstBody []byte
+			client := resty.New().SetTransport(roundTripperFunc(func(req *http.Request) (*http.Response, error) {
+				body, err := io.ReadAll(req.Body)
+				require.NoError(t, err)
+				require.NoError(t, req.Body.Close())
+				if requests == 0 {
+					firstBody = body
+				} else {
+					assert.Equal(t, firstBody, body)
+				}
+				if key == "" {
+					assert.NotContains(t, req.Header, http.CanonicalHeaderKey("HashSHA256"))
+				} else {
+					mac := hmac.New(sha256.New, []byte(key))
+					_, err = mac.Write(body)
+					require.NoError(t, err)
+					assert.Equal(t, hex.EncodeToString(mac.Sum(nil)), req.Header.Get("HashSHA256"))
+				}
+				requests++
+				status := http.StatusOK
+				if requests == 1 {
+					status = http.StatusServiceUnavailable
+				}
+				return &http.Response{StatusCode: status, Header: make(http.Header), Body: http.NoBody, Request: req}, nil
+			}))
+			sender := NewSender("http://metrics", client, key)
+			value := 12.5
+			require.NoError(t, sender.Send([]models.Metrics{{ID: "Alloc", MType: models.Gauge, Value: &value}}))
+			assert.Equal(t, 2, requests)
+		})
+	}
+}
 
 func (fn roundTripperFunc) RoundTrip(req *http.Request) (*http.Response, error) { return fn(req) }
