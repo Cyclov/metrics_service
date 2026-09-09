@@ -364,7 +364,7 @@ func TestAgentUpdateAndValueIntegration(t *testing.T) {
 	defer server.Close()
 
 	client := resty.New().SetTransport(server.Client().Transport)
-	sender := agent.NewSender(server.URL, client)
+	sender := agent.NewSender(server.URL, client, "")
 	value := 42.5
 	require.NoError(t, sender.Send([]models.Metrics{
 		{ID: "Alloc", MType: models.Gauge, Value: &value},

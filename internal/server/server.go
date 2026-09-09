@@ -20,9 +20,9 @@ import (
 func Run(ctx context.Context, cfg config.ServerSettings) error {
 	var database *pgxpool.Pool
 	var storage repository.Storage
-	if cfg.DbAdr != "" {
+	if cfg.DBAdr != "" {
 		var err error
-		database, err = db.Connect(ctx, cfg.DbAdr)
+		database, err = db.Connect(ctx, cfg.DBAdr)
 		if err != nil {
 			return err
 		}
@@ -64,6 +64,7 @@ func Run(ctx context.Context, cfg config.ServerSettings) error {
 	}
 	router := chi.NewRouter()
 	router.Use(logger.RequestLogger)
+	router.Use(handler.HashMiddleware(cfg.Key))
 	router.Use(handler.GzipMiddleware)
 	router.Post("/update/", h.Update)
 	router.Post("/updates/", h.Updates)

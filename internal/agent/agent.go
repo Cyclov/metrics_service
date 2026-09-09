@@ -4,6 +4,9 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -98,17 +101,18 @@ func (c *Collector) CurrentMetrics() []models.Metrics {
 type Sender struct {
 	baseURL string
 	client  *resty.Client
+	key     string
 }
 
 var sendRetryDelays = []time.Duration{time.Second, 3 * time.Second, 5 * time.Second}
 
-func NewSender(baseURL string, client *resty.Client) *Sender {
+func NewSender(baseURL string, client *resty.Client, key string) *Sender {
 	if client == nil {
 		client = resty.New().SetTimeout(5 * time.Second)
 	}
 	client.SetTransport(newRetryingTransport(client.GetClient().Transport, sendRetryDelays))
 
-	return &Sender{baseURL: baseURL, client: client}
+	return &Sender{baseURL: baseURL, client: client, key: key}
 }
 
 func (s *Sender) Send(metrics []models.Metrics) error {
@@ -133,13 +137,16 @@ func (s *Sender) post(ctx context.Context, metrics []models.Metrics) error {
 		return fmt.Errorf("compress metrics batch: %w", err)
 	}
 
-	resp, err := s.client.R().
+	req := s.client.R().
 		SetContext(ctx).
 		SetHeader("Content-Type", "application/json").
 		SetHeader("Content-Encoding", "gzip").
 		SetHeader("Accept-Encoding", "gzip").
-		SetBody(body.Bytes()).
-		Post(s.baseURL + "/updates/")
+		SetBody(body.Bytes())
+	if s.key != "" {
+		req.SetHeader("HashSHA256", signBody(body.Bytes(), s.key))
+	}
+	resp, err := req.Post(s.baseURL + "/updates/")
 	if err != nil {
 		return err
 	}
@@ -147,6 +154,12 @@ func (s *Sender) post(ctx context.Context, metrics []models.Metrics) error {
 		return fmt.Errorf("server returned status %s", resp.Status())
 	}
 	return nil
+}
+
+func signBody(body []byte, key string) string {
+	mac := hmac.New(sha256.New, []byte(key))
+	mac.Write(body)
+	return hex.EncodeToString(mac.Sum(nil))
 }
 
 func Run(ctx context.Context, collector *Collector, sender *Sender, pollInterval, reportInterval time.Duration) error {
