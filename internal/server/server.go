@@ -64,6 +64,7 @@ func Run(ctx context.Context, cfg config.ServerSettings) error {
 	}
 	router := chi.NewRouter()
 	router.Use(logger.RequestLogger)
+	router.Use(handler.HashMiddleware(cfg.Key))
 	router.Use(handler.GzipMiddleware)
 	router.Post("/update/", h.Update)
 	router.Post("/updates/", h.Updates)

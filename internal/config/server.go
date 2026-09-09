@@ -12,6 +12,7 @@ type ServerSettings struct {
 	DbAdr           string `env:"DATABASE_DSN"`
 	StoreInterval   int64  `env:"STORE_INTERVAL"`
 	FileStoragePath string `env:"FILE_STORAGE_PATH"`
+	Key             string `env:"KEY"`
 	Restore         bool   `env:"RESTORE"`
 }
 
@@ -22,6 +23,7 @@ func ServerConfig() (ServerSettings, error) {
 	flag.StringVar(&settings.DbAdr, "d", "", "database connection string")
 	flag.Int64Var(&settings.StoreInterval, "i", 300, "metrics store interval in seconds")
 	flag.StringVar(&settings.FileStoragePath, "f", "", "metrics storage file path")
+	flag.StringVar(&settings.Key, "k", "", "key for HMAC-SHA256 request signing")
 	flag.BoolVar(&settings.Restore, "r", true, "restore metrics from storage file")
 	flag.Parse()
 
