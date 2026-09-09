@@ -3,7 +3,9 @@ package agent
 import (
 	"bytes"
 	"compress/gzip"
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"math/rand"
@@ -98,55 +100,56 @@ type Sender struct {
 	client  *resty.Client
 }
 
-func NewSender(baseURL string, client *resty.Client) *Sender {
+var sendRetryDelays = []time.Duration{time.Second, 3 * time.Second, 5 * time.Second}
 
+func NewSender(baseURL string, client *resty.Client) *Sender {
 	if client == nil {
 		client = resty.New().SetTimeout(5 * time.Second)
 	}
+	client.SetTransport(newRetryingTransport(client.GetClient().Transport, sendRetryDelays))
 
 	return &Sender{baseURL: baseURL, client: client}
 }
 
 func (s *Sender) Send(metrics []models.Metrics) error {
-	for _, metric := range metrics {
-		if err := s.post(metric); err != nil {
-			return err
-		}
-	}
-
-	return nil
+	return s.SendContext(context.Background(), metrics)
 }
 
-func (s *Sender) post(metric models.Metrics) error {
+func (s *Sender) SendContext(ctx context.Context, metrics []models.Metrics) error {
+	if len(metrics) == 0 {
+		return nil
+	}
+	return s.post(ctx, metrics)
+}
+
+func (s *Sender) post(ctx context.Context, metrics []models.Metrics) error {
 	var body bytes.Buffer
 	zw := gzip.NewWriter(&body)
-	if err := json.NewEncoder(zw).Encode(metric); err != nil {
+	if err := json.NewEncoder(zw).Encode(metrics); err != nil {
 		_ = zw.Close()
-		return fmt.Errorf("encode metric %q: %w", metric.ID, err)
+		return fmt.Errorf("encode metrics batch: %w", err)
 	}
 	if err := zw.Close(); err != nil {
-		return fmt.Errorf("compress metric %q: %w", metric.ID, err)
+		return fmt.Errorf("compress metrics batch: %w", err)
 	}
 
 	resp, err := s.client.R().
+		SetContext(ctx).
 		SetHeader("Content-Type", "application/json").
 		SetHeader("Content-Encoding", "gzip").
 		SetHeader("Accept-Encoding", "gzip").
 		SetBody(body.Bytes()).
-		Post(s.baseURL + "/update/")
-
+		Post(s.baseURL + "/updates/")
 	if err != nil {
 		return err
 	}
-
 	if !resp.IsSuccess() {
 		return fmt.Errorf("server returned status %s", resp.Status())
 	}
-
 	return nil
 }
 
-func Run(collector *Collector, sender *Sender, pollInterval, reportInterval time.Duration) error {
+func Run(ctx context.Context, collector *Collector, sender *Sender, pollInterval, reportInterval time.Duration) error {
 
 	collector.Poll()
 	pollTicker := time.NewTicker(pollInterval)
@@ -157,10 +160,12 @@ func Run(collector *Collector, sender *Sender, pollInterval, reportInterval time
 
 	for {
 		select {
+		case <-ctx.Done():
+			return nil
 		case <-pollTicker.C:
 			collector.Poll()
 		case <-reportTicker.C:
-			if err := sender.Send(collector.CurrentMetrics()); err != nil {
+			if err := sender.SendContext(ctx, collector.CurrentMetrics()); err != nil && !errors.Is(err, context.Canceled) {
 				log.Printf("failed to send metrics: %v", err)
 			}
 		}

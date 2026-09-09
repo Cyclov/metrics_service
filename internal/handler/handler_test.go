@@ -2,7 +2,9 @@ package handler
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -14,6 +16,7 @@ import (
 	"github.com/go-resty/resty/v2"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/mock/gomock"
 )
 
 type storageMock struct {
@@ -21,26 +24,73 @@ type storageMock struct {
 	counters map[string]int64
 }
 
-func (s *storageMock) AddGauge(name string, value float64) {
+func TestPing(t *testing.T) {
+	tests := []struct {
+		name       string
+		configured bool
+		pingErr    error
+		wantStatus int
+	}{
+		{name: "connected", configured: true, wantStatus: http.StatusOK},
+		{name: "connection error", configured: true, pingErr: errors.New("connection lost"), wantStatus: http.StatusInternalServerError},
+		{name: "database not configured", wantStatus: http.StatusOK},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			var database []DatabasePinger
+			if tt.configured {
+				databaseMock := NewMockDatabasePinger(ctrl)
+				databaseMock.EXPECT().Ping(gomock.Any()).Return(tt.pingErr)
+				database = append(database, databaseMock)
+			}
+
+			h := New(newStorageMock(), nil, database...)
+			req := httptest.NewRequest(http.MethodGet, "/ping", nil)
+			rec := httptest.NewRecorder()
+
+			h.Ping(rec, req)
+
+			assert.Equal(t, tt.wantStatus, rec.Code)
+		})
+	}
+}
+
+func (s *storageMock) SetGauge(_ context.Context, name string, value float64) error {
 	s.gauges[name] = value
+	return nil
 }
 
-func (s *storageMock) AddCounter(name string, value int64) {
+func (s *storageMock) AddCounter(_ context.Context, name string, value int64) (int64, error) {
 	s.counters[name] += value
+	return s.counters[name], nil
 }
 
-func (s *storageMock) Gauge(name string) (float64, bool) {
+func (s *storageMock) UpdateBatch(_ context.Context, metrics []models.Metrics) error {
+	for _, metric := range metrics {
+		switch metric.MType {
+		case models.Gauge:
+			s.gauges[metric.ID] = *metric.Value
+		case models.Counter:
+			s.counters[metric.ID] += *metric.Delta
+		}
+	}
+	return nil
+}
+
+func (s *storageMock) Gauge(_ context.Context, name string) (float64, bool, error) {
 	value, ok := s.gauges[name]
-	return value, ok
+	return value, ok, nil
 }
 
-func (s *storageMock) Counter(name string) (int64, bool) {
+func (s *storageMock) Counter(_ context.Context, name string) (int64, bool, error) {
 	value, ok := s.counters[name]
-	return value, ok
+	return value, ok, nil
 }
 
-func (s *storageMock) AllMetrics() (map[string]float64, map[string]int64) {
-	return s.gauges, s.counters
+func (s *storageMock) AllMetrics(_ context.Context) (map[string]float64, map[string]int64, error) {
+	return s.gauges, s.counters, nil
 }
 
 func TestUpdatePath(t *testing.T) {
@@ -176,6 +226,44 @@ func TestAllMetrics(t *testing.T) {
 	}
 }
 
+func TestUpdates(t *testing.T) {
+	storage := newStorageMock()
+	h := New(storage, nil)
+	value := 12.5
+	delta := int64(3)
+	body, err := json.Marshal([]models.Metrics{
+		{ID: "Alloc", MType: models.Gauge, Value: &value},
+		{ID: "PollCount", MType: models.Counter, Delta: &delta},
+	})
+	require.NoError(t, err)
+
+	req := httptest.NewRequest(http.MethodPost, "/updates/", bytes.NewReader(body))
+	rec := httptest.NewRecorder()
+	h.Updates(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	assert.Equal(t, value, storage.gauges["Alloc"])
+	assert.Equal(t, delta, storage.counters["PollCount"])
+}
+
+func TestUpdatesRejectsWholeInvalidBatch(t *testing.T) {
+	storage := newStorageMock()
+	h := New(storage, nil)
+	value := 12.5
+	body, err := json.Marshal([]models.Metrics{
+		{ID: "Alloc", MType: models.Gauge, Value: &value},
+		{ID: "Broken", MType: models.Counter},
+	})
+	require.NoError(t, err)
+
+	req := httptest.NewRequest(http.MethodPost, "/updates/", bytes.NewReader(body))
+	rec := httptest.NewRecorder()
+	h.Updates(rec, req)
+
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
+	assert.Empty(t, storage.gauges)
+}
+
 func TestJSONEndpoints(t *testing.T) {
 	storage := &storageMock{
 		gauges:   make(map[string]float64),
@@ -270,6 +358,7 @@ func TestAgentUpdateAndValueIntegration(t *testing.T) {
 	router := chi.NewRouter()
 	router.Use(GzipMiddleware)
 	router.Post("/update/", h.Update)
+	router.Post("/updates/", h.Updates)
 	router.Post("/value/", h.Value)
 	server := httptest.NewServer(router)
 	defer server.Close()

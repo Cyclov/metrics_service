@@ -8,18 +8,36 @@ import (
 	"time"
 
 	"github.com/Cyclov/metrics_service/internal/config"
+	"github.com/Cyclov/metrics_service/internal/config/db"
 	"github.com/Cyclov/metrics_service/internal/handler"
 	"github.com/Cyclov/metrics_service/internal/logger"
 	"github.com/Cyclov/metrics_service/internal/repository"
 	"github.com/go-chi/chi/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"go.uber.org/zap"
 )
 
 func Run(ctx context.Context, cfg config.ServerSettings) error {
-	storage := repository.NewMemStorage()
-	if cfg.Restore {
-		if err := storage.Load(cfg.FileStoragePath); err != nil {
+	var database *pgxpool.Pool
+	var storage repository.Storage
+	if cfg.DbAdr != "" {
+		var err error
+		database, err = db.Connect(ctx, cfg.DbAdr)
+		if err != nil {
 			return err
+		}
+		defer database.Close()
+		storage = repository.NewPostgresStorage(database)
+	}
+
+	var fileStorage *repository.MemStorage
+	if storage == nil {
+		fileStorage = repository.NewMemStorage()
+		storage = fileStorage
+		if cfg.FileStoragePath != "" && cfg.Restore {
+			if err := fileStorage.Load(cfg.FileStoragePath); err != nil {
+				return err
+			}
 		}
 	}
 
@@ -30,24 +48,29 @@ func Run(ctx context.Context, cfg config.ServerSettings) error {
 	defer storeWG.Wait()
 
 	var onUpdate func() error
-	if cfg.StoreInterval == 0 {
-		onUpdate = func() error { return storage.Save(cfg.FileStoragePath) }
-	} else {
+	if fileStorage != nil && cfg.FileStoragePath != "" && cfg.StoreInterval == 0 {
+		onUpdate = func() error { return fileStorage.Save(cfg.FileStoragePath) }
+	} else if fileStorage != nil && cfg.FileStoragePath != "" {
 		storeWG.Add(1)
 		go func() {
 			defer storeWG.Done()
-			storeMetrics(ctx, storage, cfg.FileStoragePath, time.Duration(cfg.StoreInterval)*time.Second)
+			storeMetrics(ctx, fileStorage, cfg.FileStoragePath, time.Duration(cfg.StoreInterval)*time.Second)
 		}()
 	}
 
 	h := handler.New(storage, onUpdate)
+	if database != nil {
+		h = handler.New(storage, onUpdate, database)
+	}
 	router := chi.NewRouter()
 	router.Use(logger.RequestLogger)
 	router.Use(handler.GzipMiddleware)
 	router.Post("/update/", h.Update)
+	router.Post("/updates/", h.Updates)
 	router.Post("/value/", h.Value)
 	router.Post("/update/{type}/{name}/{value}", h.UpdatePath)
 	router.Get("/value/{type}/{name}", h.ValuePath)
+	router.Get("/ping", h.Ping)
 	router.Get("/", h.AllMetrics)
 
 	httpServer := &http.Server{
