@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -39,6 +40,27 @@ func TestCollectorPoll(t *testing.T) {
 	assert.Equal(t, int64(2), *secondByID["PollCount"].Delta)
 	assert.Equal(t, models.Gauge, firstByID["Alloc"].MType)
 	assert.Equal(t, models.Gauge, firstByID["RandomValue"].MType)
+}
+
+func TestCollectorSystemMetrics(t *testing.T) {
+	collector := NewCollector()
+	collector.setSystemMetrics(100, 40, []float64{12.5, 75})
+	collector.Poll()
+	metrics := metricsByID(collector.CurrentMetrics())
+	for name, want := range map[string]float64{
+		"TotalMemory":     100,
+		"FreeMemory":      40,
+		"CPUutilization1": 12.5,
+		"CPUutilization2": 75,
+	} {
+		metric, ok := metrics[name]
+		require.True(t, ok, "CurrentMetrics() missing %s", name)
+		require.NotNil(t, metric.Value)
+		assert.Equal(t, models.Gauge, metric.MType)
+		assert.Equal(t, want, *metric.Value)
+	}
+	collector.setSystemMetrics(100, 30, []float64{25})
+	assert.NotContains(t, metricsByID(collector.CurrentMetrics()), "CPUutilization2")
 }
 
 func metricsByID(metrics []models.Metrics) map[string]models.Metrics {
@@ -159,8 +181,73 @@ func TestRunStopsWhenContextIsCanceled(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	err := Run(ctx, NewCollector(), NewSender("http://metrics", resty.New(), ""), time.Hour, time.Hour)
+	err := Run(ctx, NewCollector(), NewSender("http://metrics", resty.New(), ""), time.Hour, time.Hour, 1)
 	require.NoError(t, err)
+}
+
+func TestRunBoundsRequestsWithoutBlockingPoll(t *testing.T) {
+	var inFlight atomic.Int32
+	started := make(chan int, 3)
+	release := make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		zr, err := gzip.NewReader(r.Body)
+		if err != nil {
+			started <- 0
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		defer zr.Close()
+		var batch []models.Metrics
+		if err := json.NewDecoder(zr).Decode(&batch); err != nil {
+			started <- 0
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		inFlight.Add(1)
+		defer inFlight.Add(-1)
+		started <- len(batch)
+		select {
+		case <-release:
+		case <-r.Context().Done():
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	collector := NewCollector()
+	sender := NewSender(server.URL, resty.New().SetTransport(server.Client().Transport), "")
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- Run(ctx, collector, sender, 10*time.Millisecond, 10*time.Millisecond, 2) }()
+
+	for range 2 {
+		select {
+		case count := <-started:
+			assert.Greater(t, count, 1, "Run() should send a batch")
+		case <-time.After(2 * time.Second):
+			t.Fatal("Run() did not start two concurrent requests")
+		}
+	}
+	before := *metricsByID(collector.CurrentMetrics())["PollCount"].Delta
+	require.Eventually(t, func() bool {
+		return *metricsByID(collector.CurrentMetrics())["PollCount"].Delta > before
+	}, time.Second, 10*time.Millisecond, "runtime polling stopped while requests were blocked")
+	assert.Equal(t, int32(2), inFlight.Load())
+	select {
+	case <-started:
+		t.Error("Run() exceeded rate limit of 2")
+	default:
+	}
+
+	cancel()
+	close(release)
+	select {
+	case err := <-done:
+		require.NoError(t, err)
+	case <-time.After(2 * time.Second):
+		t.Fatal("Run() did not stop after cancellation")
+	}
 }
 
 type roundTripperFunc func(*http.Request) (*http.Response, error)

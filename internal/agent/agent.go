@@ -41,7 +41,7 @@ func (c *Collector) Poll() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	c.gauges = map[string]float64{
+	runtimeGauges := map[string]float64{
 		"Alloc":         float64(m.Alloc),
 		"BuckHashSys":   float64(m.BuckHashSys),
 		"Frees":         float64(m.Frees),
@@ -70,6 +70,9 @@ func (c *Collector) Poll() {
 		"Sys":           float64(m.Sys),
 		"TotalAlloc":    float64(m.TotalAlloc),
 		"RandomValue":   c.random.Float64(),
+	}
+	for name, value := range runtimeGauges {
+		c.gauges[name] = value
 	}
 	c.pollCount++
 }
@@ -162,25 +165,85 @@ func signBody(body []byte, key string) string {
 	return hex.EncodeToString(mac.Sum(nil))
 }
 
-func Run(ctx context.Context, collector *Collector, sender *Sender, pollInterval, reportInterval time.Duration) error {
+func Run(ctx context.Context, collector *Collector, sender *Sender, pollInterval, reportInterval time.Duration, rateLimit int) error {
+	if pollInterval <= 0 || reportInterval <= 0 {
+		return errors.New("poll and report intervals must be positive")
+	}
+	if rateLimit < 1 {
+		return fmt.Errorf("rate limit must be positive: %d", rateLimit)
+	}
+	if ctx.Err() != nil {
+		return nil
+	}
 
-	collector.Poll()
-	pollTicker := time.NewTicker(pollInterval)
-	reportTicker := time.NewTicker(reportInterval)
+	jobs := make(chan []models.Metrics)
+	var wg sync.WaitGroup
 
-	defer pollTicker.Stop()
-	defer reportTicker.Stop()
-
-	for {
-		select {
-		case <-ctx.Done():
-			return nil
-		case <-pollTicker.C:
-			collector.Poll()
-		case <-reportTicker.C:
-			if err := sender.SendContext(ctx, collector.CurrentMetrics()); err != nil && !errors.Is(err, context.Canceled) {
-				log.Printf("failed to send metrics: %v", err)
+	wg.Go(func() {
+		collector.Poll()
+		ticker := time.NewTicker(pollInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				collector.Poll()
 			}
 		}
+	})
+
+	wg.Go(func() {
+		collectSystem(ctx, collector)
+		ticker := time.NewTicker(pollInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				collectSystem(ctx, collector)
+			}
+		}
+	})
+
+	wg.Go(func() {
+		defer close(jobs)
+		ticker := time.NewTicker(reportInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				select {
+				case <-ctx.Done():
+					return
+				case jobs <- collector.CurrentMetrics():
+				}
+			}
+		}
+	})
+
+	for range rateLimit {
+		wg.Go(func() {
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case metrics, ok := <-jobs:
+					if !ok {
+						return
+					}
+					if err := sender.SendContext(ctx, metrics); err != nil && !errors.Is(err, context.Canceled) {
+						log.Printf("failed to send metrics: %v", err)
+					}
+				}
+			}
+		})
 	}
+
+	<-ctx.Done()
+	wg.Wait()
+	return nil
 }

@@ -28,6 +28,7 @@ func main() {
 		sender,
 		time.Duration(cfg.PollInterval)*time.Second,
 		time.Duration(cfg.ReportInterval)*time.Second,
+		cfg.RateLimit,
 	); err != nil {
 		log.Fatal(err)
 	}
