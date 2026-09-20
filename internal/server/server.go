@@ -20,9 +20,9 @@ import (
 func Run(ctx context.Context, cfg config.ServerSettings) error {
 	var database *pgxpool.Pool
 	var storage repository.Storage
-	if cfg.DBAdr != "" {
+	if cfg.DatabaseDSN != "" {
 		var err error
-		database, err = db.Connect(ctx, cfg.DBAdr)
+		database, err = db.Connect(ctx, cfg.DatabaseDSN)
 		if err != nil {
 			return err
 		}
@@ -75,7 +75,7 @@ func Run(ctx context.Context, cfg config.ServerSettings) error {
 	router.Get("/", h.AllMetrics)
 
 	httpServer := &http.Server{
-		Addr:    cfg.SrvAdr,
+		Addr:    cfg.ServerAddress,
 		Handler: router,
 	}
 

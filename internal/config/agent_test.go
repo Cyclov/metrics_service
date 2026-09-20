@@ -2,7 +2,6 @@ package config
 
 import (
 	"flag"
-	"os"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -22,16 +21,12 @@ func TestAgentConfigKey(t *testing.T) {
 		{name: "environment overrides flag", args: []string{"-k=flag-key"}, envKey: "env-key", want: "env-key"},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
-			oldArgs, oldFlags := os.Args, flag.CommandLine
-			t.Cleanup(func() { os.Args, flag.CommandLine = oldArgs, oldFlags })
-			os.Args = append([]string{"agent"}, tt.args...)
-			flag.CommandLine = flag.NewFlagSet("agent", flag.ContinueOnError)
 			t.Setenv("KEY", tt.envKey)
 			t.Setenv("ADDRESS", "localhost:8080")
 			t.Setenv("REPORT_INTERVAL", "10")
 			t.Setenv("POLL_INTERVAL", "2")
 			t.Setenv("RATE_LIMIT", "")
-			cfg, err := AgentConfig()
+			cfg, err := parseAgentConfig(flag.NewFlagSet("agent", flag.ContinueOnError), tt.args)
 			require.NoError(t, err)
 			assert.Equal(t, tt.want, cfg.Key)
 		})
@@ -43,7 +38,7 @@ func TestAgentConfigRateLimit(t *testing.T) {
 		name    string
 		args    []string
 		envRate string
-		want    int
+		want    int64
 		wantErr bool
 	}{
 		{name: "default", want: 1},
@@ -53,12 +48,8 @@ func TestAgentConfigRateLimit(t *testing.T) {
 		{name: "zero", args: []string{"-l=0"}, wantErr: true},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
-			oldArgs, oldFlags := os.Args, flag.CommandLine
-			t.Cleanup(func() { os.Args, flag.CommandLine = oldArgs, oldFlags })
-			os.Args = append([]string{"agent"}, tt.args...)
-			flag.CommandLine = flag.NewFlagSet("agent", flag.ContinueOnError)
 			t.Setenv("RATE_LIMIT", tt.envRate)
-			cfg, err := AgentConfig()
+			cfg, err := parseAgentConfig(flag.NewFlagSet("agent", flag.ContinueOnError), tt.args)
 			if tt.wantErr {
 				require.Error(t, err)
 				return

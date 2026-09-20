@@ -18,7 +18,7 @@ func main() {
 	}
 
 	collector := agent.NewCollector()
-	sender := agent.NewSender("http://"+cfg.SrvAdr, nil, cfg.Key)
+	sender := agent.NewSender("http://"+cfg.ServerAddress, nil, cfg.Key)
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 

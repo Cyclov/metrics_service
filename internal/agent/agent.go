@@ -165,7 +165,7 @@ func signBody(body []byte, key string) string {
 	return hex.EncodeToString(mac.Sum(nil))
 }
 
-func Run(ctx context.Context, collector *Collector, sender *Sender, pollInterval, reportInterval time.Duration, rateLimit int) error {
+func Run(ctx context.Context, collector *Collector, sender *Sender, pollInterval, reportInterval time.Duration, rateLimit int64) error {
 	if pollInterval <= 0 || reportInterval <= 0 {
 		return errors.New("poll and report intervals must be positive")
 	}
