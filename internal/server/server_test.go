@@ -23,7 +23,7 @@ func TestRunServesRequestsAndStopsOnContextCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	runErr := make(chan error, 1)
 	go func() {
-		runErr <- Run(ctx, config.ServerSettings{SrvAdr: address})
+		runErr <- Run(ctx, config.ServerSettings{ServerAddress: address})
 	}()
 
 	client := &http.Client{Timeout: 100 * time.Millisecond}

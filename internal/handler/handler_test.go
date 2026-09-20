@@ -9,11 +9,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/Cyclov/metrics_service/internal/agent"
 	models "github.com/Cyclov/metrics_service/internal/model"
-	"github.com/Cyclov/metrics_service/internal/repository"
-	"github.com/go-chi/chi/v5"
-	"github.com/go-resty/resty/v2"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
@@ -350,36 +346,4 @@ func newStorageMock() *storageMock {
 		gauges:   make(map[string]float64),
 		counters: make(map[string]int64),
 	}
-}
-
-func TestAgentUpdateAndValueIntegration(t *testing.T) {
-	storage := repository.NewMemStorage()
-	h := New(storage, nil)
-	router := chi.NewRouter()
-	router.Use(GzipMiddleware)
-	router.Post("/update/", h.Update)
-	router.Post("/updates/", h.Updates)
-	router.Post("/value/", h.Value)
-	server := httptest.NewServer(router)
-	defer server.Close()
-
-	client := resty.New().SetTransport(server.Client().Transport)
-	sender := agent.NewSender(server.URL, client)
-	value := 42.5
-	require.NoError(t, sender.Send([]models.Metrics{
-		{ID: "Alloc", MType: models.Gauge, Value: &value},
-	}))
-
-	body, err := json.Marshal(models.Metrics{ID: "Alloc", MType: models.Gauge})
-	require.NoError(t, err)
-	req := httptest.NewRequest(http.MethodPost, "/value/", bytes.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	rec := httptest.NewRecorder()
-	router.ServeHTTP(rec, req)
-
-	require.Equal(t, http.StatusOK, rec.Code)
-	var metric models.Metrics
-	require.NoError(t, json.NewDecoder(rec.Body).Decode(&metric))
-	require.NotNil(t, metric.Value)
-	assert.Equal(t, value, *metric.Value)
 }

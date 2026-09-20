@@ -18,7 +18,7 @@ func main() {
 	}
 
 	collector := agent.NewCollector()
-	sender := agent.NewSender("http://"+cfg.SrvAdr, nil)
+	sender := agent.NewSender("http://"+cfg.ServerAddress, nil, cfg.Key)
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
@@ -28,6 +28,7 @@ func main() {
 		sender,
 		time.Duration(cfg.PollInterval)*time.Second,
 		time.Duration(cfg.ReportInterval)*time.Second,
+		cfg.RateLimit,
 	); err != nil {
 		log.Fatal(err)
 	}

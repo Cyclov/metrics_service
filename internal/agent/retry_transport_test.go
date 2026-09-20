@@ -49,7 +49,10 @@ func TestRetryingTransportRetriesTransportErrors(t *testing.T) {
 	req, err := http.NewRequest(http.MethodGet, "http://metrics/", nil)
 	require.NoError(t, err)
 
-	_, err = newRetryingTransport(next, []time.Duration{0, 0, 0}).RoundTrip(req)
+	resp, err := newRetryingTransport(next, []time.Duration{0, 0, 0}).RoundTrip(req)
+	if resp != nil {
+		defer resp.Body.Close()
+	}
 	require.Error(t, err)
 	assert.Equal(t, 4, attempts)
 }
@@ -63,6 +66,9 @@ func TestRetryingTransportStopsWhenContextIsCanceled(t *testing.T) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://metrics/", nil)
 	require.NoError(t, err)
 
-	_, err = newRetryingTransport(next, []time.Duration{0}).RoundTrip(req)
+	resp, err := newRetryingTransport(next, []time.Duration{0}).RoundTrip(req)
+	if resp != nil {
+		defer resp.Body.Close()
+	}
 	assert.True(t, errors.Is(err, context.Canceled))
 }

@@ -14,6 +14,7 @@ import (
 	"time"
 
 	models "github.com/Cyclov/metrics_service/internal/model"
+	"github.com/Cyclov/metrics_service/internal/sign"
 	"github.com/go-resty/resty/v2"
 )
 
@@ -38,7 +39,7 @@ func (c *Collector) Poll() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	c.gauges = map[string]float64{
+	runtimeGauges := map[string]float64{
 		"Alloc":         float64(m.Alloc),
 		"BuckHashSys":   float64(m.BuckHashSys),
 		"Frees":         float64(m.Frees),
@@ -67,6 +68,9 @@ func (c *Collector) Poll() {
 		"Sys":           float64(m.Sys),
 		"TotalAlloc":    float64(m.TotalAlloc),
 		"RandomValue":   c.random.Float64(),
+	}
+	for name, value := range runtimeGauges {
+		c.gauges[name] = value
 	}
 	c.pollCount++
 }
@@ -98,17 +102,18 @@ func (c *Collector) CurrentMetrics() []models.Metrics {
 type Sender struct {
 	baseURL string
 	client  *resty.Client
+	key     string
 }
 
 var sendRetryDelays = []time.Duration{time.Second, 3 * time.Second, 5 * time.Second}
 
-func NewSender(baseURL string, client *resty.Client) *Sender {
+func NewSender(baseURL string, client *resty.Client, key string) *Sender {
 	if client == nil {
 		client = resty.New().SetTimeout(5 * time.Second)
 	}
 	client.SetTransport(newRetryingTransport(client.GetClient().Transport, sendRetryDelays))
 
-	return &Sender{baseURL: baseURL, client: client}
+	return &Sender{baseURL: baseURL, client: client, key: key}
 }
 
 func (s *Sender) Send(metrics []models.Metrics) error {
@@ -133,13 +138,16 @@ func (s *Sender) post(ctx context.Context, metrics []models.Metrics) error {
 		return fmt.Errorf("compress metrics batch: %w", err)
 	}
 
-	resp, err := s.client.R().
+	req := s.client.R().
 		SetContext(ctx).
 		SetHeader("Content-Type", "application/json").
 		SetHeader("Content-Encoding", "gzip").
 		SetHeader("Accept-Encoding", "gzip").
-		SetBody(body.Bytes()).
-		Post(s.baseURL + "/updates/")
+		SetBody(body.Bytes())
+	if s.key != "" {
+		req.SetHeader("HashSHA256", sign.SignHex(body.Bytes(), s.key))
+	}
+	resp, err := req.Post(s.baseURL + "/updates/")
 	if err != nil {
 		return err
 	}
@@ -149,25 +157,73 @@ func (s *Sender) post(ctx context.Context, metrics []models.Metrics) error {
 	return nil
 }
 
-func Run(ctx context.Context, collector *Collector, sender *Sender, pollInterval, reportInterval time.Duration) error {
+func Run(ctx context.Context, collector *Collector, sender *Sender, pollInterval, reportInterval time.Duration, rateLimit int64) error {
+	if pollInterval <= 0 || reportInterval <= 0 {
+		return errors.New("poll and report intervals must be positive")
+	}
+	if rateLimit < 1 {
+		return fmt.Errorf("rate limit must be positive: %d", rateLimit)
+	}
+	if ctx.Err() != nil {
+		return nil
+	}
 
-	collector.Poll()
-	pollTicker := time.NewTicker(pollInterval)
-	reportTicker := time.NewTicker(reportInterval)
+	jobs := make(chan []models.Metrics)
+	var wg sync.WaitGroup
 
-	defer pollTicker.Stop()
-	defer reportTicker.Stop()
+	wg.Go(func() {
+		runCollector(ctx, pollInterval, collector.Poll)
+	})
+
+	wg.Go(func() {
+		primeCPUPercent(ctx)
+		runCollector(ctx, pollInterval, func() { collectSystem(ctx, collector) })
+	})
+
+	wg.Go(func() {
+		defer close(jobs)
+		ticker := time.NewTicker(reportInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				select {
+				case <-ctx.Done():
+					return
+				case jobs <- collector.CurrentMetrics():
+				}
+			}
+		}
+	})
+
+	for range rateLimit {
+		wg.Go(func() {
+			for metrics := range jobs {
+				if err := sender.SendContext(ctx, metrics); err != nil && !errors.Is(err, context.Canceled) {
+					log.Printf("failed to send metrics: %v", err)
+				}
+			}
+		})
+	}
+
+	<-ctx.Done()
+	wg.Wait()
+	return nil
+}
+
+func runCollector(ctx context.Context, interval time.Duration, collect func()) {
+	collect()
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
 
 	for {
 		select {
 		case <-ctx.Done():
-			return nil
-		case <-pollTicker.C:
-			collector.Poll()
-		case <-reportTicker.C:
-			if err := sender.SendContext(ctx, collector.CurrentMetrics()); err != nil && !errors.Is(err, context.Canceled) {
-				log.Printf("failed to send metrics: %v", err)
-			}
+			return
+		case <-ticker.C:
+			collect()
 		}
 	}
 }
