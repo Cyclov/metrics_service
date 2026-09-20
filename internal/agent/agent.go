@@ -172,32 +172,12 @@ func Run(ctx context.Context, collector *Collector, sender *Sender, pollInterval
 	var wg sync.WaitGroup
 
 	wg.Go(func() {
-		collector.Poll()
-		ticker := time.NewTicker(pollInterval)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-ticker.C:
-				collector.Poll()
-			}
-		}
+		runCollector(ctx, pollInterval, collector.Poll)
 	})
 
 	wg.Go(func() {
 		primeCPUPercent(ctx)
-		collectSystem(ctx, collector)
-		ticker := time.NewTicker(pollInterval)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-ticker.C:
-				collectSystem(ctx, collector)
-			}
-		}
+		runCollector(ctx, pollInterval, func() { collectSystem(ctx, collector) })
 	})
 
 	wg.Go(func() {
@@ -220,17 +200,9 @@ func Run(ctx context.Context, collector *Collector, sender *Sender, pollInterval
 
 	for range rateLimit {
 		wg.Go(func() {
-			for {
-				select {
-				case <-ctx.Done():
-					return
-				case metrics, ok := <-jobs:
-					if !ok {
-						return
-					}
-					if err := sender.SendContext(ctx, metrics); err != nil && !errors.Is(err, context.Canceled) {
-						log.Printf("failed to send metrics: %v", err)
-					}
+			for metrics := range jobs {
+				if err := sender.SendContext(ctx, metrics); err != nil && !errors.Is(err, context.Canceled) {
+					log.Printf("failed to send metrics: %v", err)
 				}
 			}
 		})
@@ -239,4 +211,19 @@ func Run(ctx context.Context, collector *Collector, sender *Sender, pollInterval
 	<-ctx.Done()
 	wg.Wait()
 	return nil
+}
+
+func runCollector(ctx context.Context, interval time.Duration, collect func()) {
+	collect()
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			collect()
+		}
+	}
 }
