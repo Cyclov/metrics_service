@@ -4,9 +4,6 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
-	"crypto/hmac"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -17,6 +14,7 @@ import (
 	"time"
 
 	models "github.com/Cyclov/metrics_service/internal/model"
+	"github.com/Cyclov/metrics_service/internal/sign"
 	"github.com/go-resty/resty/v2"
 )
 
@@ -147,7 +145,7 @@ func (s *Sender) post(ctx context.Context, metrics []models.Metrics) error {
 		SetHeader("Accept-Encoding", "gzip").
 		SetBody(body.Bytes())
 	if s.key != "" {
-		req.SetHeader("HashSHA256", signBody(body.Bytes(), s.key))
+		req.SetHeader("HashSHA256", sign.SignHex(body.Bytes(), s.key))
 	}
 	resp, err := req.Post(s.baseURL + "/updates/")
 	if err != nil {
@@ -157,12 +155,6 @@ func (s *Sender) post(ctx context.Context, metrics []models.Metrics) error {
 		return fmt.Errorf("server returned status %s", resp.Status())
 	}
 	return nil
-}
-
-func signBody(body []byte, key string) string {
-	mac := hmac.New(sha256.New, []byte(key))
-	mac.Write(body)
-	return hex.EncodeToString(mac.Sum(nil))
 }
 
 func Run(ctx context.Context, collector *Collector, sender *Sender, pollInterval, reportInterval time.Duration, rateLimit int64) error {
@@ -194,6 +186,7 @@ func Run(ctx context.Context, collector *Collector, sender *Sender, pollInterval
 	})
 
 	wg.Go(func() {
+		primeCPUPercent(ctx)
 		collectSystem(ctx, collector)
 		ticker := time.NewTicker(pollInterval)
 		defer ticker.Stop()

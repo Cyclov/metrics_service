@@ -3,11 +3,14 @@ package handler
 import (
 	"bytes"
 	"crypto/hmac"
-	"crypto/sha256"
 	"encoding/hex"
 	"io"
 	"net/http"
+
+	"github.com/Cyclov/metrics_service/internal/sign"
 )
+
+const maxRequestBodySize int64 = 128 << 10 // 128 KiB
 
 func HashMiddleware(key string) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
@@ -16,38 +19,34 @@ func HashMiddleware(key string) func(http.Handler) http.Handler {
 		}
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			response := &hashResponseWriter{header: w.Header().Clone()}
-			if verifyRequestHash(response, r, key) {
+			signature := r.Header.Get("HashSHA256")
+			if signature == "" {
 				next.ServeHTTP(response, r)
+				response.writeSignedResponse(w, key)
+				return
+			}
+
+			r.Body = http.MaxBytesReader(w, r.Body, maxRequestBodySize)
+			body, err := io.ReadAll(r.Body)
+			_ = r.Body.Close()
+			if err != nil {
+				http.Error(response, "Cannot read request body", http.StatusBadRequest)
+			} else {
+				r.Body = io.NopCloser(bytes.NewReader(body))
+				if verifyRequestHash(body, signature, key) {
+					next.ServeHTTP(response, r)
+				} else {
+					http.Error(response, "Invalid request hash", http.StatusBadRequest)
+				}
 			}
 			response.writeSignedResponse(w, key)
 		})
 	}
 }
 
-func verifyRequestHash(w http.ResponseWriter, r *http.Request, key string) bool {
-	signature := r.Header.Get("HashSHA256")
-	if signature == "" {
-		return true
-	}
-	body, err := io.ReadAll(r.Body)
-	_ = r.Body.Close()
-	if err != nil {
-		http.Error(w, "Cannot read request body", http.StatusBadRequest)
-		return false
-	}
+func verifyRequestHash(body []byte, signature, key string) bool {
 	received, err := hex.DecodeString(signature)
-	if err != nil || !hmac.Equal(received, hashBody(body, key)) {
-		http.Error(w, "Invalid request hash", http.StatusBadRequest)
-		return false
-	}
-	r.Body = io.NopCloser(bytes.NewReader(body))
-	return true
-}
-
-func hashBody(body []byte, key string) []byte {
-	mac := hmac.New(sha256.New, []byte(key))
-	mac.Write(body)
-	return mac.Sum(nil)
+	return err == nil && hmac.Equal(received, sign.Sign(body, key))
 }
 
 type hashResponseWriter struct {
@@ -66,7 +65,7 @@ func (w *hashResponseWriter) writeSignedResponse(dst http.ResponseWriter, key st
 	for name, values := range w.sentHeader {
 		dst.Header()[name] = values
 	}
-	dst.Header().Set("HashSHA256", hex.EncodeToString(hashBody(w.body.Bytes(), key)))
+	dst.Header().Set("HashSHA256", sign.SignHex(w.body.Bytes(), key))
 	dst.WriteHeader(w.status)
 	_, _ = dst.Write(w.body.Bytes())
 }

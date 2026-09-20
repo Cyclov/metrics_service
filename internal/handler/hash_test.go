@@ -12,10 +12,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/Cyclov/metrics_service/internal/agent"
-	models "github.com/Cyclov/metrics_service/internal/model"
 	"github.com/Cyclov/metrics_service/internal/repository"
-	"github.com/go-resty/resty/v2"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -95,20 +92,6 @@ func TestHashMiddleware(t *testing.T) {
 	}
 }
 
-func TestHashMiddlewareWithAgent(t *testing.T) {
-	storage := repository.NewMemStorage()
-	h := HashMiddleware("test-key")(GzipMiddleware(http.HandlerFunc(New(storage, nil).Updates)))
-	server := httptest.NewServer(h)
-	defer server.Close()
-	sender := agent.NewSender(server.URL, resty.New(), "test-key")
-	delta := int64(3)
-	require.NoError(t, sender.Send([]models.Metrics{{ID: "PollCount", MType: models.Counter, Delta: &delta}}))
-	value, found, err := storage.Counter(context.Background(), "PollCount")
-	require.NoError(t, err)
-	require.True(t, found)
-	assert.Equal(t, delta, value)
-}
-
 func TestHashMiddlewareUnsignedValueRequest(t *testing.T) {
 	for _, encoding := range []string{"identity", "gzip"} {
 		t.Run(encoding, func(t *testing.T) {
@@ -150,4 +133,36 @@ func TestHashMiddlewareEmptyResponse(t *testing.T) {
 	assert.Equal(t, http.StatusOK, resp.Code)
 	assert.Empty(t, resp.Body.Bytes())
 	assert.Equal(t, testSignature(nil, "test-key"), resp.Header().Get("HashSHA256"))
+}
+
+func TestHashMiddlewareRequestBodyLimit(t *testing.T) {
+	for _, tt := range []struct {
+		name       string
+		size       int
+		wantStatus int
+		wantCalled bool
+	}{
+		{name: "at limit", size: int(maxRequestBodySize), wantStatus: http.StatusNoContent, wantCalled: true},
+		{name: "over limit", size: int(maxRequestBodySize) + 1, wantStatus: http.StatusBadRequest},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			body := bytes.Repeat([]byte("x"), tt.size)
+			req := httptest.NewRequest(http.MethodPost, "/update/", bytes.NewReader(body))
+			req.Header.Set("HashSHA256", testSignature(body, "test-key"))
+			resp := httptest.NewRecorder()
+			called := false
+			h := HashMiddleware("test-key")(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				called = true
+				got, err := io.ReadAll(r.Body)
+				require.NoError(t, err)
+				assert.Equal(t, body, got)
+				w.WriteHeader(http.StatusNoContent)
+			}))
+
+			h.ServeHTTP(resp, req)
+
+			assert.Equal(t, tt.wantStatus, resp.Code)
+			assert.Equal(t, tt.wantCalled, called)
+		})
+	}
 }

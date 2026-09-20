@@ -11,6 +11,13 @@ import (
 	"github.com/shirou/gopsutil/v4/mem"
 )
 
+func primeCPUPercent(ctx context.Context) {
+	_, err := cpu.PercentWithContext(ctx, 0, true)
+	if err != nil {
+		logSystemError(err)
+	}
+}
+
 func collectSystem(ctx context.Context, collector *Collector) {
 	memory, err := mem.VirtualMemoryWithContext(ctx)
 	if err != nil {
